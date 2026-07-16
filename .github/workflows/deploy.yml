@@ -17,35 +17,45 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script_stop: true
           script: |
-            set -e
+            set -euxo pipefail
 
             APP_DIR="/opt/assisi-map"
             REPO_URL="https://github.com/${{ github.repository }}.git"
             BRANCH="${{ github.ref_name }}"
 
+            echo "==> Prepare app directory"
             sudo mkdir -p "$APP_DIR"
-            if [ ! -w "$APP_DIR" ]; then
-              sudo chown -R "$USER:$USER" "$APP_DIR"
-            fi
+            sudo chown -R "$USER:$USER" "$APP_DIR"
+            cd "$APP_DIR"
 
-            if [ ! -d "$APP_DIR/.git" ]; then
-              cd "$APP_DIR"
-              git init -b "$BRANCH"
+            echo "==> Sync git repository (keep existing .env)"
+            if [ ! -d .git ]; then
+              git init
               git remote add origin "$REPO_URL"
-              git fetch origin "$BRANCH"
-              git checkout -f "$BRANCH"
-              git reset --hard "origin/$BRANCH"
             else
-              cd "$APP_DIR"
-              git fetch origin "$BRANCH"
-              git checkout "$BRANCH"
-              git reset --hard "origin/$BRANCH"
+              git remote set-url origin "$REPO_URL"
             fi
 
+            git fetch origin "$BRANCH"
+            git checkout -B "$BRANCH" "origin/$BRANCH"
+            git reset --hard "origin/$BRANCH"
+
+            echo "==> Validate server .env"
             if [ ! -f .env ]; then
-              echo "Missing $APP_DIR/.env on server. Create it first."
+              echo "ERROR: Missing $APP_DIR/.env on server. Create it first."
               exit 1
             fi
 
-            docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
-            docker image prune -f
+            for var in APP_DOMAIN POSTGRES_PASSWORD JWT_SECRET; do
+              if ! grep -q "^${var}=" .env; then
+                echo "ERROR: Missing ${var} in .env"
+                exit 1
+              fi
+            done
+
+            echo "==> Start containers"
+            sudo docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
+            sudo docker compose -f docker-compose.prod.yml ps
+            sudo docker image prune -f
+
+            echo "==> Deploy finished"
