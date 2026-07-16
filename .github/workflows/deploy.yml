@@ -20,6 +20,7 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           source: scripts/deploy-ec2.sh
           target: /tmp/
+          strip_components: 1
 
       - name: Run deploy on server
         uses: appleboy/ssh-action@v1.2.0
