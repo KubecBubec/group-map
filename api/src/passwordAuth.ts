@@ -43,3 +43,18 @@ export function localEmailForName(name: string): string {
     .slice(0, 48);
   return `${slug || "user"}@local.app`;
 }
+
+/** Unikátne zobrazované meno (Google OAuth / registrácia). */
+export async function allocateUniqueName(
+  exists: (name: string) => Promise<boolean>,
+  preferred: string,
+): Promise<string> {
+  const base = preferred.trim().slice(0, 40) || "User";
+  let candidate = base;
+  let n = 2;
+  while (await exists(candidate)) {
+    const suffix = ` ${n++}`;
+    candidate = `${base.slice(0, Math.max(1, 40 - suffix.length))}${suffix}`;
+  }
+  return candidate;
+}

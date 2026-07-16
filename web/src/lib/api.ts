@@ -34,6 +34,19 @@ export async function apiFetch<T = unknown>(path: string, options: RequestInit =
   return (await res.json()) as T;
 }
 
+export const loginWithGoogleUrl = () => `${API_BASE}/auth/google`;
+
+export interface AppMeta {
+  authMode?: string;
+  googleOAuthEnabled: boolean;
+  pushEnabled?: boolean;
+  isLan?: boolean;
+}
+
+export async function fetchMeta(): Promise<AppMeta> {
+  return apiFetch<AppMeta>("/meta");
+}
+
 export interface AuthResult {
   token: string;
   user: { id: string; name: string; email: string; role: string };

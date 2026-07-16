@@ -2,11 +2,19 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import jwt from "jsonwebtoken";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { PrismaClient } from "@prisma/client";
+import { OAuth2Client } from "google-auth-library";
 import { createServer } from "node:http";
 import { Server } from "socket.io";
-import { getClientIp, getRequestOrigin, isLanRequest, isPrivateLanHost } from "./network.js";
+import {
+  getClientIp,
+  getOAuthRedirectUri,
+  getRequestOrigin,
+  isLanRequest,
+  isPrivateLanHost,
+} from "./network.js";
 import {
   getVapidPublicKey,
   resolvePingRecipientIds,
@@ -18,6 +26,7 @@ import { fetchWalkingDirections } from "./directions.js";
 import { findMeetingLimitConflict } from "./meetingPointLimits.js";
 import { meetingTitleSchema, validationErrorResponse } from "./meetingValidation.js";
 import {
+  allocateUniqueName,
   credentialsSchema,
   hashPassword,
   localEmailForName,
@@ -34,8 +43,12 @@ const io = new Server(httpServer, { cors: { origin: "*" } });
 
 const PORT = Number(process.env.PORT ?? 4000);
 const JWT_SECRET = process.env.JWT_SECRET ?? "dev-secret";
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? "";
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET ?? "";
 const GOOGLE_MAPS_API_KEY =
   process.env.GOOGLE_MAPS_SERVER_API_KEY ?? process.env.GOOGLE_MAPS_API_KEY ?? "";
+
+const googleOAuthEnabled = Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
 
 const publicUser = <T extends { passwordHash?: string | null }>(user: T) => {
   const { passwordHash: _ignored, ...safe } = user;
@@ -102,7 +115,8 @@ app.get("/meta", (req, res) => {
   const host = new URL(origin).hostname;
 
   res.json({
-    authMode: "password",
+    authMode: "password+google",
+    googleOAuthEnabled,
     clientIp: getClientIp(req),
     pushEnabled: Boolean(getVapidPublicKey()),
     isLan: isLanRequest(req) || isPrivateLanHost(host),
@@ -203,6 +217,94 @@ app.post("/auth/login", async (req, res) => {
   }
 
   res.json({ token: signToken(user.id, user.role), user: publicUser(user) });
+});
+
+app.get("/auth/google", (req, res) => {
+  if (!googleOAuthEnabled) return res.status(503).json({ error: "Google OAuth is not configured" });
+
+  const redirectUri = getOAuthRedirectUri(req);
+  const host = new URL(redirectUri).hostname;
+  if (isPrivateLanHost(host)) {
+    return res.status(400).json({
+      error:
+        "Google OAuth na IP adrese v sieti nie je podporované. Použi meno a heslo, alebo http://localhost:8080 / HTTPS tunel.",
+    });
+  }
+
+  const client = new OAuth2Client(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, redirectUri);
+  const state = jwt.sign({ n: randomUUID(), redirectUri }, JWT_SECRET, { expiresIn: "10m" });
+  const url = client.generateAuthUrl({
+    access_type: "online",
+    scope: ["openid", "email", "profile"],
+    prompt: "select_account",
+    state,
+    redirect_uri: redirectUri,
+  });
+  res.redirect(url);
+});
+
+app.get("/auth/callback/google", async (req, res) => {
+  if (!googleOAuthEnabled) return res.status(503).send("Google OAuth is not configured");
+  const frontendOrigin = getRequestOrigin(req);
+  try {
+    const code = String(req.query.code ?? "");
+    const state = String(req.query.state ?? "");
+    if (!code) return res.status(400).send("Missing authorization code");
+    const statePayload = jwt.verify(state, JWT_SECRET) as { n: string; redirectUri: string };
+    const redirectUri = statePayload.redirectUri ?? getOAuthRedirectUri(req);
+    const client = new OAuth2Client(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, redirectUri);
+
+    const { tokens } = await client.getToken({ code, redirect_uri: redirectUri });
+    if (!tokens.id_token) return res.status(400).send("Missing id_token from Google");
+
+    const ticket = await client.verifyIdToken({
+      idToken: tokens.id_token,
+      audience: GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+    if (!payload?.email || !payload.sub) {
+      return res.status(400).send("Google account is missing required profile data");
+    }
+
+    const email = payload.email;
+    const googleId = payload.sub;
+    const preferredName = (payload.name ?? email.split("@")[0] ?? "User").trim().slice(0, 40);
+
+    let user = await prisma.user.findFirst({
+      where: { OR: [{ googleId }, { email }] },
+    });
+
+    if (user) {
+      if (!user.googleId) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: { googleId },
+        });
+      }
+    } else {
+      const name = await allocateUniqueName(
+        async (candidate) =>
+          Boolean(
+            await prisma.user.findFirst({
+              where: { name: { equals: candidate, mode: "insensitive" } },
+            }),
+          ),
+        preferredName,
+      );
+      const firstUserCount = await prisma.user.count();
+      const role: AppRole = firstUserCount === 0 ? "ADMIN" : "MEMBER";
+      user = await prisma.user.create({
+        data: { email, name, googleId, role },
+      });
+      emitUserNew(user);
+    }
+
+    const token = signToken(user.id, user.role);
+    res.redirect(`${frontendOrigin}/?token=${encodeURIComponent(token)}`);
+  } catch (error) {
+    console.error("Google OAuth callback failed:", error);
+    res.redirect(`${frontendOrigin}/?oauth_error=1`);
+  }
 });
 
 app.get("/me", auth(), async (req: AuthRequest, res) => {

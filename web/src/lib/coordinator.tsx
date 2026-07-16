@@ -134,7 +134,7 @@ export function CoordinatorProvider({ children }: { children: ReactNode }) {
   const [meetingMoveNonce, setMeetingMoveNonce] = useState<number | null>(null);
   const [activeMeetingId, setActiveMeetingId] = useState<string | null>(null);
   const [pingTarget, setPingTarget] = useState<PingTarget | null>(null);
-  const [authError] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [lastPing, setLastPing] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
@@ -144,9 +144,13 @@ export function CoordinatorProvider({ children }: { children: ReactNode }) {
   userIdRef.current = user?.id ?? null;
 
   useEffect(() => {
-    // Legacy: staré OAuth redirecty s ?token= ešte spracuj
     const params = new URLSearchParams(window.location.search);
     const oauthToken = params.get("token");
+    const oauthError = params.get("oauth_error");
+    if (oauthError) {
+      setAuthError("Prihlásenie cez Google zlyhalo. Skús to znova alebo použi meno a heslo.");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
     if (oauthToken) {
       setToken(oauthToken);
       setTokenState(oauthToken);

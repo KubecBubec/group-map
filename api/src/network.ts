@@ -1,10 +1,18 @@
 import type { Request } from "express";
 
+const API_PUBLIC_PREFIX = (process.env.API_PUBLIC_PREFIX ?? "/api").replace(/\/$/, "");
+
 export function getRequestOrigin(req: Request): string {
   const host = req.get("x-forwarded-host") ?? req.get("host");
   const proto = req.get("x-forwarded-proto") ?? req.protocol ?? "http";
   if (!host) return process.env.FRONTEND_URL ?? "http://localhost:8080";
   return `${proto}://${host.split(",")[0].trim()}`;
+}
+
+export function getOAuthRedirectUri(req: Request): string {
+  if (process.env.GOOGLE_REDIRECT_URI) return process.env.GOOGLE_REDIRECT_URI;
+  const prefix = API_PUBLIC_PREFIX ? `${API_PUBLIC_PREFIX}` : "";
+  return `${getRequestOrigin(req)}${prefix}/auth/callback/google`;
 }
 
 export function getClientIp(req: Request): string {

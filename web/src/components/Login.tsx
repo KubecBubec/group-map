@@ -1,5 +1,13 @@
-import { useState } from "react";
-import { loginWithPassword, registerWithPassword, setToken } from "../lib/api";
+import { useEffect, useState } from "react";
+import {
+  fetchMeta,
+  loginWithGoogleUrl,
+  loginWithPassword,
+  registerWithPassword,
+  setToken,
+} from "../lib/api";
+import { isPrivateHostname } from "../lib/network";
+import { GoogleG } from "./icons";
 
 function parseAuthError(e: unknown): string {
   if (!(e instanceof Error)) return "Prihlásenie zlyhalo";
@@ -23,6 +31,23 @@ export function Login({
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [googleEnabled, setGoogleEnabled] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchMeta()
+      .then((meta) => {
+        if (!cancelled) setGoogleEnabled(Boolean(meta.googleOAuthEnabled));
+      })
+      .catch(() => {
+        if (!cancelled) setGoogleEnabled(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const showGoogle = googleEnabled && !isPrivateHostname();
 
   const submit = async () => {
     setFormError(null);
@@ -122,6 +147,30 @@ export function Login({
             </>
           )}
         </p>
+
+        {showGoogle && (
+          <>
+            <div className="auth-divider">alebo</div>
+            <button
+              className="google-btn"
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                window.location.href = loginWithGoogleUrl();
+              }}
+            >
+              <GoogleG size={20} />
+              Prihlásiť sa cez Google
+            </button>
+          </>
+        )}
+
+        {googleEnabled && isPrivateHostname() && (
+          <p className="hint" style={{ textAlign: "center" }}>
+            Google na lokálnej IP nefunguje. Použi meno a heslo, alebo otvor appku cez localhost /
+            HTTPS tunel.
+          </p>
+        )}
 
         <p className="hint" style={{ textAlign: "center" }}>
           Prihlásením súhlasíš so zdieľaním polohy so svojou skupinou počas akcie. Prvý účet je
