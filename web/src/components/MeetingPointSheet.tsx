@@ -152,8 +152,8 @@ export function MeetingPointSheet({
           {routeVisible ? "Skryť trasu na mape" : "Zobraziť trasu na mape"}
         </button>
         <p className="hint">
-          Na mape uvidíš svoju trasu k zrazu. Ak ju skryješ, pri bode stretnutia ostane ponuka
-          „Zobraziť trasu“. Trasu iného člena zobrazíš klepnutím na jeho šípku.
+          Na mape uvidíš svoju trasu k zrazu. Ak ju skryješ, vľavo dole ostane „Zobraziť trasu“.
+          Trasu iného člena zobrazíš klepnutím na jeho šípku (vtedy sa tvoja trasa schová).
         </p>
         <a
           className="btn btn--block"

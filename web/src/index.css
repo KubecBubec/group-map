@@ -995,6 +995,11 @@ button {
   gap: 8px;
 }
 
+.map-route-nav__actions--stack {
+  flex-direction: column;
+  align-items: stretch;
+}
+
 .map-route-nav__others {
   display: flex;
   flex-direction: column;
