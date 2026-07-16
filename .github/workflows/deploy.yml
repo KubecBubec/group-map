@@ -23,23 +23,24 @@ jobs:
             REPO_URL="https://github.com/${{ github.repository }}.git"
             BRANCH="${{ github.ref_name }}"
 
-            if [ ! -d "$APP_DIR/.git" ]; then
-              ENV_BACKUP=""
-              if [ -f "$APP_DIR/.env" ]; then
-                ENV_BACKUP="$(mktemp)"
-                cp "$APP_DIR/.env" "$ENV_BACKUP"
-              fi
-              rm -rf "$APP_DIR"
-              git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
-              if [ -n "$ENV_BACKUP" ] && [ -f "$ENV_BACKUP" ]; then
-                mv "$ENV_BACKUP" "$APP_DIR/.env"
-              fi
+            sudo mkdir -p "$APP_DIR"
+            if [ ! -w "$APP_DIR" ]; then
+              sudo chown -R "$USER:$USER" "$APP_DIR"
             fi
 
-            cd "$APP_DIR"
-            git fetch origin "$BRANCH"
-            git checkout "$BRANCH"
-            git reset --hard "origin/$BRANCH"
+            if [ ! -d "$APP_DIR/.git" ]; then
+              cd "$APP_DIR"
+              git init -b "$BRANCH"
+              git remote add origin "$REPO_URL"
+              git fetch origin "$BRANCH"
+              git checkout -f "$BRANCH"
+              git reset --hard "origin/$BRANCH"
+            else
+              cd "$APP_DIR"
+              git fetch origin "$BRANCH"
+              git checkout "$BRANCH"
+              git reset --hard "origin/$BRANCH"
+            fi
 
             if [ ! -f .env ]; then
               echo "Missing $APP_DIR/.env on server. Create it first."
