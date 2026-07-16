@@ -1,0 +1,30 @@
+{
+  "name": "new-project",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev:web": "npm run dev -w web",
+    "dev:api": "npm run dev -w api",
+    "build:web": "npm run build -w web",
+    "build:api": "npm run build -w api",
+    "docker:up": "docker compose up -d --build && node scripts/show-mobile-qr.mjs",
+    "docker:up:tunnel": "docker compose --profile tunnel up -d --build && node scripts/show-tunnel-url.mjs",
+    "mobile:url": "node scripts/show-mobile-qr.mjs",
+    "tunnel:url": "node scripts/show-tunnel-url.mjs",
+    "docker:down": "docker compose --profile tunnel down",
+    "docker:logs": "docker compose logs -f"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "workspaces": [
+    "web",
+    "api"
+  ],
+  "devDependencies": {
+    "qrcode-terminal": "^0.12.0"
+  }
+}

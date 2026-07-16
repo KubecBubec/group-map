@@ -1,0 +1,17 @@
+{
+  "name": "Koordinátor skupiny",
+  "short_name": "Koordinátor",
+  "description": "Živá mapa a koordinácia skupiny",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f5fb",
+  "theme_color": "#6d28d9",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

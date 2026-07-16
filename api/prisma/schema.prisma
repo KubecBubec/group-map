@@ -1,0 +1,127 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  MAIN_LEADER
+  LEADER
+  MEMBER
+}
+
+enum PingPriority {
+  INFO
+  MEET
+  URGENT
+}
+
+model User {
+  id           String           @id @default(cuid())
+  email        String           @unique
+  name         String
+  passwordHash String?
+  googleId     String?          @unique
+  role         Role             @default(MEMBER)
+  createdAt    DateTime         @default(now())
+  memberships  GroupMembership[]
+  locations    LocationUpdate[]
+  sentPings    Ping[]           @relation("PingSender")
+  pushSubscriptions PushSubscription[]
+}
+
+model Group {
+  id          String            @id @default(cuid())
+  name        String
+  creatorId   String
+  createdAt   DateTime          @default(now())
+  memberships GroupMembership[]
+}
+
+model GroupMembership {
+  id      String @id @default(cuid())
+  userId  String
+  groupId String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group   Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, groupId])
+}
+
+model LocationUpdate {
+  id         String   @id @default(cuid())
+  userId     String
+  latitude   Float
+  longitude  Float
+  heading    Float?
+  accuracy   Float?
+  updatedAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model MeetingPoint {
+  id          String   @id @default(cuid())
+  title       String
+  creatorId   String
+  latitude    Float
+  longitude   Float
+  scope       String
+  targetIds   String[]
+  activeUntil DateTime?
+  createdAt   DateTime @default(now())
+}
+
+model Ping {
+  id         String       @id @default(cuid())
+  senderId   String
+  scope      String
+  targetIds  String[]
+  message    String
+  priority   PingPriority
+  createdAt  DateTime     @default(now())
+  sender     User         @relation("PingSender", fields: [senderId], references: [id], onDelete: Cascade)
+}
+
+model Incident {
+  id          String   @id @default(cuid())
+  title       String
+  createdById String
+  targetUserId String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}
+
+model FeatureConfig {
+  id                  String   @id @default("global")
+  routesEnabled       Boolean  @default(true)
+  placesEnabled       Boolean  @default(true)
+  auditTrailEnabled   Boolean  @default(false)
+  incidentEnabled     Boolean  @default(true)
+  monthlyBudgetUsd    Float?
+  warningThresholdPct Int      @default(80)
+  updatedAt           DateTime @updatedAt
+}
+
+/// Denná spotreba Google Maps platformy (merané v aplikácii).
+model ApiUsageDaily {
+  day         DateTime @id @db.Date
+  mapsLoads   Int      @default(0)
+  routesCalls Int      @default(0)
+  placesCalls Int      @default(0)
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}

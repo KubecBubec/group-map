@@ -1,0 +1,16 @@
+:80 {
+	# REST API – /api/auth/login -> api:4000/auth/login
+	handle_path /api/* {
+		reverse_proxy api:4000
+	}
+
+	# Socket.IO (WebSocket upgrade)
+	handle /socket.io/* {
+		reverse_proxy api:4000
+	}
+
+	# PWA frontend (SPA)
+	handle {
+		reverse_proxy web:80
+	}
+}
