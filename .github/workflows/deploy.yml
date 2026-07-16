@@ -9,7 +9,19 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy over SSH
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Copy deploy script to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: scripts/deploy-ec2.sh
+          target: /tmp/
+
+      - name: Run deploy on server
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.EC2_HOST }}
@@ -19,37 +31,5 @@ jobs:
           script: |
             export REPO_URL="https://github.com/${{ github.repository }}.git"
             export BRANCH="${{ github.ref_name }}"
-            bash -s <<DEPLOY
-            set -euo pipefail
-            APP_DIR="/opt/assisi-map"
-            echo "==> Prepare app directory"
-            sudo mkdir -p "$APP_DIR"
-            sudo chown -R "$USER:$USER" "$APP_DIR"
-            cd "$APP_DIR"
-            echo "==> Sync git repository (keep existing .env)"
-            if [ ! -d .git ]; then
-              git init
-              git remote add origin "$REPO_URL"
-            else
-              git remote set-url origin "$REPO_URL"
-            fi
-            git fetch origin "$BRANCH"
-            git checkout -B "$BRANCH" "origin/$BRANCH"
-            git reset --hard "origin/$BRANCH"
-            echo "==> Validate server .env"
-            if [ ! -f .env ]; then
-              echo "ERROR: Missing $APP_DIR/.env on server. Create it first."
-              exit 1
-            fi
-            for var in APP_DOMAIN POSTGRES_PASSWORD JWT_SECRET; do
-              if ! grep -q "^${var}=" .env; then
-                echo "ERROR: Missing ${var} in .env"
-                exit 1
-              fi
-            done
-            echo "==> Start containers"
-            sudo docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
-            sudo docker compose -f docker-compose.prod.yml ps
-            sudo docker image prune -f
-            echo "==> Deploy finished"
-            DEPLOY
+            chmod +x /tmp/deploy-ec2.sh
+            bash /tmp/deploy-ec2.sh
