@@ -32,7 +32,14 @@ function MeetingCard({ meeting }: { meeting: MeetingPoint }) {
     <div className="card">
       <div className="card__head">
         <div>
-          <h3 className="card__title">📍 {meeting.title}</h3>
+          <h3 className="card__title">
+            {meeting.scope === "GLOBAL" ? "⚑" : "📍"} {meeting.title}
+            {meeting.scope === "GLOBAL" && (
+              <span className="badge badge--global" style={{ marginLeft: 8 }}>
+                Pre všetkých
+              </span>
+            )}
+          </h3>
           <p className="card__sub">
             {SCOPE_LABEL[meeting.scope]} · vytvorené {fromNow(meeting.createdAt)}
           </p>

@@ -194,6 +194,7 @@ export function MapView({ isActive }: { isActive: boolean }) {
     });
   }, []);
 
+  // Predvolená trasa (vlastná) len pri výbere zrazu — nie pri každom refresh polôh.
   useEffect(() => {
     if (!activeMeetingId || !user) {
       setRouteUserIds([]);
@@ -209,8 +210,20 @@ export function MapView({ isActive }: { isActive: boolean }) {
     setRouteUserIds(
       targetIds.includes(user.id) && isLocationFreshForRoute(myLoc) ? [user.id] : [],
     );
-  }, [activeMeetingId, user?.id, meetingPoints, users, groups, locations]);
+    // Zámerne bez locations/meetingPoints/users/groups — inak by background refresh
+    // znova vynútil len „moju trasu“ a skryl by trasy ostatných.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset only on meeting switch
+  }, [activeMeetingId, user?.id]);
 
+  // Ak zraz medzitým zmizol zo zoznamu, zruš zobrazené trasy.
+  useEffect(() => {
+    if (!activeMeetingId) return;
+    if (!meetingPoints.some((m) => m.id === activeMeetingId)) {
+      setRouteUserIds([]);
+    }
+  }, [meetingPoints, activeMeetingId]);
+
+  // Odstráň trasy používateľov, ktorých poloha prestala byť online.
   useEffect(() => {
     if (!activeMeeting) return;
     setRouteUserIds((prev) => {
@@ -243,10 +256,17 @@ export function MapView({ isActive }: { isActive: boolean }) {
   }, [myPos]);
 
   const filtered = useMemo(() => {
-    if (filter === "SELECTED") return locations.filter((l) => selectedUserIds.includes(l.userId));
-    if (filter === "GROUP") return locations.filter((l) => myGroupUserIds.has(l.userId));
+    const selfId = user?.id;
+    const includeSelf = (l: LocationRow) => Boolean(selfId && l.userId === selfId);
+
+    if (filter === "SELECTED") {
+      return locations.filter((l) => selectedUserIds.includes(l.userId) || includeSelf(l));
+    }
+    if (filter === "GROUP") {
+      return locations.filter((l) => myGroupUserIds.has(l.userId) || includeSelf(l));
+    }
     return locations;
-  }, [locations, filter, selectedUserIds, myGroupUserIds]);
+  }, [locations, filter, selectedUserIds, myGroupUserIds, user?.id]);
 
   const mapClusters = useMemo(() => clusterLocations(filtered), [filtered]);
 
@@ -536,6 +556,19 @@ export function MapView({ isActive }: { isActive: boolean }) {
           {meetingPoints.map((m) => {
             const tapped = isPulsing(m.id);
             const isActive = m.id === activeMeetingId;
+            const isGlobal = m.scope === "GLOBAL";
+            const fillColor = isGlobal
+              ? isActive || tapped
+                ? "#c2410c"
+                : "#ea580c"
+              : isActive
+                ? "#7c3aed"
+                : "#ffffff";
+            const strokeColor = isGlobal
+              ? "#9a3412"
+              : isActive || tapped
+                ? "#6d28d9"
+                : "#d4d4d8";
             return (
             <MarkerF
               key={m.id}
@@ -545,17 +578,21 @@ export function MapView({ isActive }: { isActive: boolean }) {
                 pulse(m.id);
                 setMeetingDetail(m);
               }}
-              label={{ text: "📍", fontSize: tapped ? "24px" : "20px", fontWeight: "700" }}
+              label={{
+                text: isGlobal ? "⚑" : "📍",
+                fontSize: tapped || isGlobal ? "24px" : "20px",
+                fontWeight: "700",
+              }}
               icon={{
                 path: google.maps.SymbolPath.CIRCLE,
-                scale: tapped ? 22 : 18,
-                fillColor: isActive ? "#7c3aed" : "#ffffff",
-                fillOpacity: isActive ? 0.22 : 0.9,
-                strokeWeight: tapped ? 3 : isActive ? 2.5 : 2,
-                strokeColor: isActive || tapped ? "#6d28d9" : "#d4d4d8",
+                scale: tapped ? 24 : isGlobal ? 22 : 18,
+                fillColor,
+                fillOpacity: isGlobal ? (isActive ? 0.95 : 0.88) : isActive ? 0.22 : 0.9,
+                strokeWeight: tapped || isGlobal ? 3 : isActive ? 2.5 : 2,
+                strokeColor,
               }}
-              title={`Stretnutie: ${m.title}${canManageMeetingPoint(user, m) ? " – klepni pre úpravu" : " – klepni pre detail"}`}
-              zIndex={isActive ? 900 : tapped ? 850 : 40}
+              title={`${isGlobal ? "Zraz pre všetkých" : "Stretnutie"}: ${m.title}${canManageMeetingPoint(user, m) ? " – klepni pre úpravu" : " – klepni pre detail"}`}
+              zIndex={isActive ? 900 : tapped ? 850 : isGlobal ? 80 : 40}
             />
             );
           })}

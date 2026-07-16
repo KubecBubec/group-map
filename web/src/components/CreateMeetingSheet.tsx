@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useCoordinator } from "../lib/coordinator";
 import { findMeetingLimitConflict, parseApiErrorMessage } from "../lib/meetingLimits";
+import { canCreateGlobalMeetingPoint } from "../lib/meetingPermissions";
 import { validateMeetingTitle } from "../lib/meetingValidation";
 import { Segmented, Sheet } from "./ui";
 import type { LatLng, MeetingScope } from "../lib/types";
@@ -13,11 +14,19 @@ export function CreateMeetingSheet({
   onClose: () => void;
 }) {
   const { groups, selectedUserIds, meetingPoints, user, createMeetingPoint } = useCoordinator();
+  const canGlobal = canCreateGlobalMeetingPoint(user);
   const [title, setTitle] = useState("");
-  const [scope, setScope] = useState<MeetingScope>("GLOBAL");
+  const [scope, setScope] = useState<MeetingScope>(canGlobal ? "GLOBAL" : "SELECTED");
   const [groupId, setGroupId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const scopeOptions = useMemo(() => {
+    const opts: { value: MeetingScope; label: string }[] = [];
+    if (canGlobal) opts.push({ value: "GLOBAL", label: "Všetci" });
+    opts.push({ value: "GROUP", label: "Skupina" }, { value: "SELECTED", label: "Vybraní" });
+    return opts;
+  }, [canGlobal]);
 
   const targetIds =
     scope === "GROUP" ? (groupId ? [groupId] : []) : scope === "SELECTED" ? selectedUserIds : [];
@@ -35,6 +44,10 @@ export function CreateMeetingSheet({
     const titleError = validateMeetingTitle(title);
     if (titleError) {
       setError(titleError);
+      return;
+    }
+    if (scope === "GLOBAL" && !canGlobal) {
+      setError("Bod stretnutia pre všetkých môže vytvoriť len vedúci.");
       return;
     }
     const targetIds =
@@ -87,16 +100,11 @@ export function CreateMeetingSheet({
         </div>
         <div className="field">
           <span className="field__label">Pre koho</span>
-          <Segmented<MeetingScope>
-            value={scope}
-            onChange={setScope}
-            options={[
-              { value: "GLOBAL", label: "Všetci" },
-              { value: "GROUP", label: "Skupina" },
-              { value: "SELECTED", label: "Vybraní" },
-            ]}
-          />
+          <Segmented<MeetingScope> value={scope} onChange={setScope} options={scopeOptions} />
         </div>
+        {scope === "GLOBAL" && (
+          <p className="hint">Zvýraznený zraz pre celú akciu – na mape bude výrazne označený.</p>
+        )}
         {scope === "GROUP" && (
           <div className="field">
             <span className="field__label">Skupina</span>
@@ -114,7 +122,9 @@ export function CreateMeetingSheet({
           <p className="hint">Vybraní účastníci z karty Členovia ({selectedUserIds.length}).</p>
         )}
         <p className="hint">
-          Limit: 1 aktívny zraz pre „Všetci“, 1 na skupinu, 1 pre tvoju výberovku „Vybraní“.
+          {canGlobal
+            ? "Limit: 1 aktívny zraz pre „Všetci“, 1 na skupinu, 1 pre tvoju výberovku „Vybraní“."
+            : "Limit: 1 na skupinu, 1 pre tvoju výberovku „Vybraní“. Zraz pre všetkých môže vytvoriť len vedúci."}
         </p>
         {limitHint && <div className="auth__error">{limitHint}</div>}
         {error && <div className="auth__error">{error}</div>}

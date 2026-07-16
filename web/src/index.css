@@ -584,6 +584,12 @@ button {
   background: #d1fae5;
   color: #047857;
 }
+.badge--global {
+  background: #ffedd5;
+  color: #c2410c;
+  text-transform: none;
+  letter-spacing: 0;
+}
 
 .dot {
   width: 9px;

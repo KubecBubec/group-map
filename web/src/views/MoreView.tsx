@@ -53,9 +53,13 @@ export function MoreView() {
   const [notifStatus, setNotifStatus] = useState<NotificationStatus>(() => getNotificationStatus());
   const [roleUser, setRoleUser] = useState("");
   const [roleValue, setRoleValue] = useState<Role>("LEADER");
+  const [promoteUser, setPromoteUser] = useState("");
   const [incidentTitle, setIncidentTitle] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [budgetInput, setBudgetInput] = useState("");
+
+  const isPlainLeader = user?.role === "LEADER";
+  const memberCandidates = users.filter((u) => u.role === "MEMBER" && u.id !== user?.id);
 
   if (showHelp) {
     return <Onboarding onComplete={() => setShowHelp(false)} />;
@@ -143,6 +147,43 @@ export function MoreView() {
             <LogoutIcon /> Odhlásiť sa
           </button>
         </div>
+
+        {isPlainLeader && (
+          <div className="card">
+            <p className="section-title">Pridať vedúceho</p>
+            <p className="hint" style={{ marginBottom: 12 }}>
+              Môžeš povýšiť účastníka na vedúceho. Ostatné roly nemeniteľ.
+            </p>
+            <div className="stack">
+              <select className="select" value={promoteUser} onChange={(e) => setPromoteUser(e.target.value)}>
+                <option value="">— vyber účastníka —</option>
+                {memberCandidates.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="btn btn--primary btn--block"
+                disabled={!promoteUser}
+                onClick={async () => {
+                  try {
+                    await setRole(promoteUser, "LEADER");
+                    setPromoteUser("");
+                    setMsg("Vedúci pridaný.");
+                  } catch (e) {
+                    setMsg(e instanceof Error ? e.message : "Nepodarilo sa pridať vedúceho.");
+                  }
+                }}
+              >
+                Nastaviť ako vedúceho
+              </button>
+              {memberCandidates.length === 0 && (
+                <p className="hint">Momentálne nie je žiadny účastník na povýšenie.</p>
+              )}
+            </div>
+          </div>
+        )}
 
         {isAdmin && (
           <>
@@ -272,9 +313,9 @@ export function MoreView() {
                 </div>
               </div>
             )}
-            {msg && <p className="hint">{msg}</p>}
           </>
         )}
+        {msg && <p className="hint">{msg}</p>}
       </div>
     </div>
   );

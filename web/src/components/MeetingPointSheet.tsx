@@ -118,12 +118,22 @@ export function MeetingPointSheet({
           </div>
         ) : (
           <p className="hint">
+            {meeting.scope === "GLOBAL" && (
+              <span className="badge badge--global" style={{ marginRight: 6 }}>
+                Pre všetkých
+              </span>
+            )}
             {SCOPE_LABEL[meeting.scope]} · vytvorené {fromNow(meeting.createdAt)}
           </p>
         )}
 
         {canManage && (
           <p className="hint">
+            {meeting.scope === "GLOBAL" && (
+              <span className="badge badge--global" style={{ marginRight: 6 }}>
+                Pre všetkých
+              </span>
+            )}
             {SCOPE_LABEL[meeting.scope]} · {targetCount}{" "}
             {targetCount === 1 ? "účastník" : targetCount < 5 ? "účastníci" : "účastníkov"} ·
             vytvorené {fromNow(meeting.createdAt)} · {meeting.latitude.toFixed(5)},{" "}

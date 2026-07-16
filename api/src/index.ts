@@ -272,9 +272,34 @@ app.get("/me", auth(), async (req: AuthRequest, res) => {
   res.json({ user: publicUser(user) });
 });
 
-app.post("/roles/:userId", auth(["ADMIN", "MAIN_LEADER"]), async (req: AuthRequest, res) => {
+app.post("/roles/:userId", auth(["ADMIN", "MAIN_LEADER", "LEADER"]), async (req: AuthRequest, res) => {
   const body = z.object({ role: z.enum(["ADMIN", "MAIN_LEADER", "LEADER", "MEMBER"]) }).parse(req.body);
   const userId = String(req.params.userId);
+  const target = await prisma.user.findUnique({ where: { id: userId } });
+  if (!target) return res.status(404).json({ error: "User not found" });
+
+  const actorRole = req.user!.role;
+
+  // Vedúci môže len povýšiť účastníka na vedúceho
+  if (actorRole === "LEADER") {
+    if (target.role !== "MEMBER" || body.role !== "LEADER") {
+      return res.status(403).json({
+        error: "leader_can_only_promote_to_leader",
+        detail: "Vedúci môže len pridať ďalšieho vedúceho spomedzi účastníkov.",
+      });
+    }
+  }
+
+  // Hlavný vedúci nesmie meniť admina ani prideľovať rolu ADMIN
+  if (actorRole === "MAIN_LEADER") {
+    if (target.role === "ADMIN") {
+      return res.status(403).json({ error: "main_leader_cannot_change_admin" });
+    }
+    if (body.role === "ADMIN") {
+      return res.status(403).json({ error: "main_leader_cannot_assign_admin" });
+    }
+  }
+
   const updated = await prisma.user.update({
     where: { id: userId },
     data: { role: body.role },
@@ -378,7 +403,7 @@ function canManageMeetingPoint(
   user: { id: string; role: AppRole },
   meeting: { creatorId: string },
 ) {
-  if (user.role === "ADMIN" || user.role === "MAIN_LEADER" || user.role === "LEADER") return true;
+  if (user.role === "ADMIN") return true;
   return meeting.creatorId === user.id;
 }
 
@@ -399,6 +424,12 @@ app.post("/meeting-points", auth(), async (req: AuthRequest, res) => {
   }
   const body = parsed.data;
 
+  if (body.scope === "GLOBAL" && req.user!.role !== "LEADER") {
+    return res.status(403).json({
+      error: "global_meeting_leader_only",
+      detail: "Bod stretnutia pre všetkých môže vytvoriť len vedúci.",
+    });
+  }
   if (body.scope === "GROUP" && body.targetIds.length !== 1) {
     return res.status(400).json({ error: "invalid_group_target", detail: "Pre scope GROUP zadaj presne jednu skupinu." });
   }
@@ -532,7 +563,7 @@ app.post("/pings", auth(), async (req: AuthRequest, res) => {
 
 app.get("/audit-trail/:userId", auth(), async (req: AuthRequest, res) => {
   const config = await prisma.featureConfig.findUnique({ where: { id: "global" } });
-  if (!config?.auditTrailEnabled && req.user?.role !== "ADMIN" && req.user?.role !== "MAIN_LEADER") {
+  if (!config?.auditTrailEnabled && req.user?.role !== "ADMIN") {
     return res.status(403).json({ error: "Audit trail disabled" });
   }
   const logs = await prisma.locationUpdate.findMany({
