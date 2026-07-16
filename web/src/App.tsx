@@ -109,10 +109,10 @@ function Shell() {
 }
 
 function Root() {
-  const { token, ready, authError, acceptToken } = useCoordinator();
+  const { token, ready, authError, acceptToken, enableGeoTracking } = useCoordinator();
   const [onboarded, setOnboarded] = useState(() => localStorage.getItem("onboarded") === "1");
 
-  if (!token) return <Login error={authError} onLanLogin={acceptToken} />;
+  if (!token) return <Login error={authError} onLogin={acceptToken} />;
 
   if (!ready) {
     return (
@@ -126,6 +126,7 @@ function Root() {
   if (!onboarded) {
     return (
       <Onboarding
+        enableGeoTracking={enableGeoTracking}
         onComplete={() => {
           localStorage.setItem("onboarded", "1");
           setOnboarded(true);

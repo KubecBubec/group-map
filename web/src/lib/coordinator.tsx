@@ -134,7 +134,7 @@ export function CoordinatorProvider({ children }: { children: ReactNode }) {
   const [meetingMoveNonce, setMeetingMoveNonce] = useState<number | null>(null);
   const [activeMeetingId, setActiveMeetingId] = useState<string | null>(null);
   const [pingTarget, setPingTarget] = useState<PingTarget | null>(null);
-  const [authError, setAuthError] = useState<string | null>(null);
+  const [authError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [lastPing, setLastPing] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
@@ -144,13 +144,9 @@ export function CoordinatorProvider({ children }: { children: ReactNode }) {
   userIdRef.current = user?.id ?? null;
 
   useEffect(() => {
+    // Legacy: staré OAuth redirecty s ?token= ešte spracuj
     const params = new URLSearchParams(window.location.search);
     const oauthToken = params.get("token");
-    const oauthError = params.get("oauth_error");
-    if (oauthError) {
-      setAuthError("Prihlásenie cez Google zlyhalo. Skús to znova.");
-      window.history.replaceState({}, "", window.location.pathname);
-    }
     if (oauthToken) {
       setToken(oauthToken);
       setTokenState(oauthToken);
@@ -236,8 +232,35 @@ export function CoordinatorProvider({ children }: { children: ReactNode }) {
     socket.on("group:updated", applyGroup);
 
     socket.on("location:update", softRefreshLocations);
-    socket.on("meeting-point:new", () => {
+    socket.on("meeting-point:new", (payload: {
+      meeting?: MeetingPoint;
+      creatorName?: string;
+      recipientIds?: string[];
+    } | MeetingPoint) => {
       apiFetch<MeetingPoint[]>("/meeting-points").then(setMeetingPoints).catch(() => {});
+
+      const uid = userIdRef.current;
+      if (!uid) return;
+
+      // Nový formát má recipientIds; starý emit bol priamo MeetingPoint
+      const isLegacy = payload && "id" in payload && !("recipientIds" in payload);
+      if (isLegacy) return;
+
+      const event = payload as {
+        meeting?: MeetingPoint;
+        creatorName?: string;
+        recipientIds?: string[];
+      };
+      if (!event.recipientIds?.includes(uid) || !event.meeting) return;
+
+      const scopeHint =
+        event.meeting.scope === "GLOBAL"
+          ? "pre všetkých"
+          : event.meeting.scope === "GROUP"
+            ? "pre skupinu"
+            : "pre vybraných";
+      const title = event.creatorName ? `Zraz · ${event.creatorName}` : "Nový bod stretnutia";
+      showLocalNotification(title, `Nový bod stretnutia ${scopeHint}: ${event.meeting.title}`);
     });
     socket.on("meeting-point:updated", (mp: MeetingPoint) => {
       setMeetingPoints((prev) => prev.map((x) => (x.id === mp.id ? mp : x)));
@@ -266,7 +289,10 @@ export function CoordinatorProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!token || !ready) return;
-    enablePushNotifications().catch(() => {});
+    // Nevyvolávaj dialóg automaticky – to robí onboarding. Len obnov subscribe, ak už je granted.
+    if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+      enablePushNotifications().catch(() => {});
+    }
     logGeoEnvironment(Boolean(myPos));
   }, [token, ready]);
 

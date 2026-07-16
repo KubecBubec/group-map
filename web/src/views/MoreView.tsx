@@ -62,7 +62,7 @@ export function MoreView() {
   const memberCandidates = users.filter((u) => u.role === "MEMBER" && u.id !== user?.id);
 
   if (showHelp) {
-    return <Onboarding onComplete={() => setShowHelp(false)} />;
+    return <Onboarding enableGeoTracking={enableGeoTracking} onComplete={() => setShowHelp(false)} />;
   }
 
   return (

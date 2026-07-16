@@ -3,7 +3,8 @@ import { useCoordinator } from "../lib/coordinator";
 import { findMeetingLimitConflict, parseApiErrorMessage } from "../lib/meetingLimits";
 import { canCreateGlobalMeetingPoint } from "../lib/meetingPermissions";
 import { validateMeetingTitle } from "../lib/meetingValidation";
-import { Segmented, Sheet } from "./ui";
+import { SearchIcon } from "./icons";
+import { Avatar, RoleBadge, Segmented, Sheet } from "./ui";
 import type { LatLng, MeetingScope } from "../lib/types";
 
 export function CreateMeetingSheet({
@@ -13,11 +14,15 @@ export function CreateMeetingSheet({
   position: LatLng;
   onClose: () => void;
 }) {
-  const { groups, selectedUserIds, meetingPoints, user, createMeetingPoint } = useCoordinator();
+  const { groups, users, selectedUserIds, meetingPoints, user, createMeetingPoint } = useCoordinator();
   const canGlobal = canCreateGlobalMeetingPoint(user);
   const [title, setTitle] = useState("");
   const [scope, setScope] = useState<MeetingScope>(canGlobal ? "GLOBAL" : "SELECTED");
   const [groupId, setGroupId] = useState("");
+  const [pickIds, setPickIds] = useState<string[]>(() =>
+    selectedUserIds.filter((id) => id !== user?.id),
+  );
+  const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -28,8 +33,16 @@ export function CreateMeetingSheet({
     return opts;
   }, [canGlobal]);
 
+  const candidates = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return users
+      .filter((u) => u.id !== user?.id)
+      .filter((u) => (q ? u.name.toLowerCase().includes(q) : true))
+      .sort((a, b) => a.name.localeCompare(b.name, "sk"));
+  }, [users, query, user?.id]);
+
   const targetIds =
-    scope === "GROUP" ? (groupId ? [groupId] : []) : scope === "SELECTED" ? selectedUserIds : [];
+    scope === "GROUP" ? (groupId ? [groupId] : []) : scope === "SELECTED" ? pickIds : [];
 
   const limitHint = useMemo(() => {
     if (!user) return null;
@@ -39,6 +52,10 @@ export function CreateMeetingSheet({
       creatorId: user.id,
     });
   }, [meetingPoints, scope, targetIds, user]);
+
+  const togglePick = (id: string) => {
+    setPickIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
 
   const submit = async () => {
     const titleError = validateMeetingTitle(title);
@@ -50,14 +67,12 @@ export function CreateMeetingSheet({
       setError("Bod stretnutia pre všetkých môže vytvoriť len vedúci.");
       return;
     }
-    const targetIds =
-      scope === "GROUP" ? (groupId ? [groupId] : []) : scope === "SELECTED" ? selectedUserIds : [];
     if (scope === "GROUP" && !groupId) {
       setError("Vyber skupinu.");
       return;
     }
-    if (scope === "SELECTED" && selectedUserIds.length === 0) {
-      setError("Vyber aspoň jedného účastníka v karte Členovia.");
+    if (scope === "SELECTED" && pickIds.length === 0) {
+      setError("Vyber aspoň jedného účastníka.");
       return;
     }
     if (user) {
@@ -119,7 +134,63 @@ export function CreateMeetingSheet({
           </div>
         )}
         {scope === "SELECTED" && (
-          <p className="hint">Vybraní účastníci z karty Členovia ({selectedUserIds.length}).</p>
+          <div className="stack">
+            <div className="field">
+              <span className="field__label">Účastníci ({pickIds.length} vybraných)</span>
+              <div
+                className="input"
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 12px" }}
+              >
+                <SearchIcon />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Hľadať podľa mena…"
+                  style={{
+                    border: "none",
+                    outline: "none",
+                    flex: 1,
+                    padding: "11px 0",
+                    background: "transparent",
+                    fontSize: 14,
+                  }}
+                />
+              </div>
+            </div>
+            {pickIds.length > 0 && (
+              <button type="button" className="btn btn--sm" onClick={() => setPickIds([])}>
+                Zrušiť výber
+              </button>
+            )}
+            <div className="meeting-pick-list">
+              {candidates.length === 0 ? (
+                <p className="hint" style={{ margin: 0 }}>
+                  {users.filter((u) => u.id !== user?.id).length === 0
+                    ? "Zatiaľ nie sú žiadni iní prihlásení účastníci."
+                    : "Nikto nenájdený – skús iné meno."}
+                </p>
+              ) : (
+                candidates.map((u) => {
+                  const checked = pickIds.includes(u.id);
+                  return (
+                    <label key={u.id} className={`meeting-pick-row${checked ? " is-checked" : ""}`}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => togglePick(u.id)}
+                        aria-label={`Vybrať ${u.name}`}
+                      />
+                      <Avatar name={u.name} small />
+                      <span className="meeting-pick-row__name">
+                        {u.name}
+                        <RoleBadge role={u.role} />
+                      </span>
+                    </label>
+                  );
+                })
+              )}
+            </div>
+          </div>
         )}
         <p className="hint">
           {canGlobal
@@ -128,7 +199,11 @@ export function CreateMeetingSheet({
         </p>
         {limitHint && <div className="auth__error">{limitHint}</div>}
         {error && <div className="auth__error">{error}</div>}
-        <button className="btn btn--primary btn--block" onClick={submit} disabled={busy || Boolean(limitHint)}>
+        <button
+          className="btn btn--primary btn--block"
+          onClick={submit}
+          disabled={busy || Boolean(limitHint)}
+        >
           {busy ? "Vytváram…" : "Vytvoriť bod"}
         </button>
       </div>

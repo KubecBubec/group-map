@@ -2,28 +2,27 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import jwt from "jsonwebtoken";
-import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { PrismaClient } from "@prisma/client";
-import { OAuth2Client } from "google-auth-library";
 import { createServer } from "node:http";
 import { Server } from "socket.io";
-import {
-  getClientIp,
-  getOAuthRedirectUri,
-  getRequestOrigin,
-  isLanRequest,
-  isPrivateLanHost,
-} from "./network.js";
+import { getClientIp, getRequestOrigin, isLanRequest, isPrivateLanHost } from "./network.js";
 import {
   getVapidPublicKey,
   resolvePingRecipientIds,
+  sendMeetingPointPush,
   sendPingPush,
 } from "./push.js";
 import { getApiUsageReport, trackApiUsage } from "./usage.js";
 import { fetchWalkingDirections } from "./directions.js";
 import { findMeetingLimitConflict } from "./meetingPointLimits.js";
 import { meetingTitleSchema, validationErrorResponse } from "./meetingValidation.js";
+import {
+  credentialsSchema,
+  hashPassword,
+  localEmailForName,
+  verifyPassword,
+} from "./passwordAuth.js";
 
 type AppRole = "ADMIN" | "MAIN_LEADER" | "LEADER" | "MEMBER";
 type AppPriority = "INFO" | "MEET" | "URGENT";
@@ -35,15 +34,8 @@ const io = new Server(httpServer, { cors: { origin: "*" } });
 
 const PORT = Number(process.env.PORT ?? 4000);
 const JWT_SECRET = process.env.JWT_SECRET ?? "dev-secret";
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? "";
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET ?? "";
 const GOOGLE_MAPS_API_KEY =
   process.env.GOOGLE_MAPS_SERVER_API_KEY ?? process.env.GOOGLE_MAPS_API_KEY ?? "";
-const ALLOW_LAN_LOGIN =
-  process.env.ALLOW_LAN_LOGIN === "true" ||
-  (process.env.ALLOW_LAN_LOGIN !== "false" && process.env.NODE_ENV !== "production");
-
-const googleOAuthEnabled = Boolean(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET);
 
 const publicUser = <T extends { passwordHash?: string | null }>(user: T) => {
   const { passwordHash: _ignored, ...safe } = user;
@@ -110,11 +102,10 @@ app.get("/meta", (req, res) => {
   const host = new URL(origin).hostname;
 
   res.json({
-    googleOAuthEnabled,
-    lanLoginEnabled: ALLOW_LAN_LOGIN,
-    lanLoginAvailable: ALLOW_LAN_LOGIN && (isLanRequest(req) || isPrivateLanHost(host)),
+    authMode: "password",
     clientIp: getClientIp(req),
     pushEnabled: Boolean(getVapidPublicKey()),
+    isLan: isLanRequest(req) || isPrivateLanHost(host),
   });
 });
 
@@ -159,111 +150,59 @@ app.delete("/push/subscribe", auth(), async (req: AuthRequest, res) => {
   res.status(204).send();
 });
 
-app.get("/auth/lan/users", async (req, res) => {
-  if (!ALLOW_LAN_LOGIN) return res.status(403).json({ error: "LAN login disabled" });
-  if (!isLanRequest(req)) {
-    return res.status(403).json({ error: "LAN login is only available on local network" });
+app.post("/auth/register", async (req, res) => {
+  const parsed = credentialsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    const msg = parsed.error.issues[0]?.message ?? "Neplatné údaje";
+    return res.status(400).json({ error: "invalid_credentials", detail: msg });
   }
-  const users = await prisma.user.findMany({
-    select: { id: true, name: true, role: true },
-    orderBy: { name: "asc" },
+  const { name, password } = parsed.data;
+
+  const existing = await prisma.user.findFirst({
+    where: { name: { equals: name, mode: "insensitive" } },
   });
-  res.json(users);
+  if (existing) {
+    return res.status(409).json({ error: "name_taken", detail: "Toto meno je už obsadené." });
+  }
+
+  let email = localEmailForName(name);
+  const emailTaken = await prisma.user.findUnique({ where: { email } });
+  if (emailTaken) {
+    email = `${email.split("@")[0]}-${Date.now()}@local.app`;
+  }
+
+  const firstUserCount = await prisma.user.count();
+  const role: AppRole = firstUserCount === 0 ? "ADMIN" : "MEMBER";
+  const passwordHash = await hashPassword(password);
+
+  const user = await prisma.user.create({
+    data: { name, email, passwordHash, role },
+  });
+  emitUserNew(user);
+  res.status(201).json({ token: signToken(user.id, user.role), user: publicUser(user) });
 });
 
-app.post("/auth/lan", async (req, res) => {
-  if (!ALLOW_LAN_LOGIN) return res.status(403).json({ error: "LAN login disabled" });
-  if (!isLanRequest(req)) {
-    return res.status(403).json({ error: "LAN login is only available on local network" });
+app.post("/auth/login", async (req, res) => {
+  const parsed = credentialsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    const msg = parsed.error.issues[0]?.message ?? "Neplatné údaje";
+    return res.status(400).json({ error: "invalid_credentials", detail: msg });
   }
-  const body = z.object({ userId: z.string().min(1) }).parse(req.body);
-  const user = await prisma.user.findUnique({ where: { id: body.userId } });
-  if (!user) return res.status(404).json({ error: "User not found" });
+  const { name, password } = parsed.data;
+
+  const user = await prisma.user.findFirst({
+    where: { name: { equals: name, mode: "insensitive" } },
+  });
+  if (!user?.passwordHash) {
+    return res.status(401).json({ error: "invalid_login", detail: "Nesprávne meno alebo heslo." });
+  }
+
+  const ok = await verifyPassword(password, user.passwordHash);
+  if (!ok) {
+    return res.status(401).json({ error: "invalid_login", detail: "Nesprávne meno alebo heslo." });
+  }
+
   res.json({ token: signToken(user.id, user.role), user: publicUser(user) });
-});
-
-app.get("/auth/google", (req, res) => {
-  if (!googleOAuthEnabled) return res.status(503).json({ error: "Google OAuth is not configured" });
-
-  const redirectUri = getOAuthRedirectUri(req);
-  const host = new URL(redirectUri).hostname;
-  const isPrivateLanHost =
-    host.startsWith("192.168.") ||
-    host.startsWith("10.") ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(host);
-
-  if (isPrivateLanHost) {
-    return res.status(400).json({
-      error:
-        "Google OAuth na IP adrese v sieti nie je podporované. Použi LAN prihlásenie alebo http://localhost:8080 na PC.",
-    });
-  }
-
-  const client = new OAuth2Client(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, redirectUri);
-  const state = jwt.sign({ n: randomUUID(), redirectUri }, JWT_SECRET, { expiresIn: "10m" });
-  const url = client.generateAuthUrl({
-    access_type: "online",
-    scope: ["openid", "email", "profile"],
-    prompt: "select_account",
-    state,
-    redirect_uri: redirectUri,
-  });
-  res.redirect(url);
-});
-
-app.get("/auth/callback/google", async (req, res) => {
-  if (!googleOAuthEnabled) return res.status(503).send("Google OAuth is not configured");
-  const frontendOrigin = getRequestOrigin(req);
-  try {
-    const code = String(req.query.code ?? "");
-    const state = String(req.query.state ?? "");
-    if (!code) return res.status(400).send("Missing authorization code");
-    const statePayload = jwt.verify(state, JWT_SECRET) as { n: string; redirectUri: string };
-    const redirectUri = statePayload.redirectUri ?? getOAuthRedirectUri(req);
-    const client = new OAuth2Client(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, redirectUri);
-
-    const { tokens } = await client.getToken({ code, redirect_uri: redirectUri });
-    if (!tokens.id_token) return res.status(400).send("Missing id_token from Google");
-
-    const ticket = await client.verifyIdToken({
-      idToken: tokens.id_token,
-      audience: GOOGLE_CLIENT_ID,
-    });
-    const payload = ticket.getPayload();
-    if (!payload?.email || !payload.sub) {
-      return res.status(400).send("Google account is missing required profile data");
-    }
-
-    const email = payload.email;
-    const googleId = payload.sub;
-    const name = payload.name ?? email.split("@")[0];
-
-    let user = await prisma.user.findFirst({
-      where: { OR: [{ googleId }, { email }] },
-    });
-
-    if (user) {
-      if (!user.googleId) {
-        user = await prisma.user.update({
-          where: { id: user.id },
-          data: { googleId },
-        });
-      }
-    } else {
-      const firstUserCount = await prisma.user.count();
-      const role: AppRole = firstUserCount === 0 ? "ADMIN" : "MEMBER";
-      user = await prisma.user.create({
-        data: { email, name, googleId, role },
-      });
-      emitUserNew(user);
-    }
-
-    const token = signToken(user.id, user.role);
-    res.redirect(`${frontendOrigin}/?token=${encodeURIComponent(token)}`);
-  } catch (error) {
-    console.error("Google OAuth callback failed:", error);
-    res.redirect(`${frontendOrigin}/?oauth_error=1`);
-  }
 });
 
 app.get("/me", auth(), async (req: AuthRequest, res) => {
@@ -458,7 +397,33 @@ app.post("/meeting-points", auth(), async (req: AuthRequest, res) => {
       activeUntil: body.activeUntil ? new Date(body.activeUntil) : undefined,
     },
   });
-  io.emit("meeting-point:new", mp);
+
+  const creator = await prisma.user.findUnique({
+    where: { id: req.user!.id },
+    select: { name: true },
+  });
+  const creatorName = creator?.name ?? "Vedúci";
+  const pingScope = body.scope === "GLOBAL" ? "ALL" : body.scope;
+  const recipientIds = await resolvePingRecipientIds(
+    prisma,
+    pingScope,
+    body.targetIds,
+    req.user!.id,
+  );
+
+  io.emit("meeting-point:new", {
+    meeting: mp,
+    creatorName,
+    recipientIds,
+  });
+
+  void sendMeetingPointPush(prisma, {
+    recipientIds,
+    title: mp.title,
+    scope: mp.scope,
+    creatorName,
+  });
+
   res.json(mp);
 });
 

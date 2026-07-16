@@ -34,31 +34,21 @@ export async function apiFetch<T = unknown>(path: string, options: RequestInit =
   return (await res.json()) as T;
 }
 
-export const loginWithGoogleUrl = () => `${API_BASE}/auth/google`;
-
-export interface AppMeta {
-  googleOAuthEnabled: boolean;
-  lanLoginEnabled: boolean;
-  lanLoginAvailable: boolean;
+export interface AuthResult {
+  token: string;
+  user: { id: string; name: string; email: string; role: string };
 }
 
-export interface LanUser {
-  id: string;
-  name: string;
-  role: string;
-}
-
-export async function fetchMeta(): Promise<AppMeta> {
-  return apiFetch<AppMeta>("/meta");
-}
-
-export async function fetchLanUsers(): Promise<LanUser[]> {
-  return apiFetch<LanUser[]>("/auth/lan/users");
-}
-
-export async function loginViaLan(userId: string): Promise<{ token: string }> {
-  return apiFetch<{ token: string }>("/auth/lan", {
+export async function loginWithPassword(name: string, password: string): Promise<AuthResult> {
+  return apiFetch<AuthResult>("/auth/login", {
     method: "POST",
-    body: JSON.stringify({ userId }),
+    body: JSON.stringify({ name, password }),
+  });
+}
+
+export async function registerWithPassword(name: string, password: string): Promise<AuthResult> {
+  return apiFetch<AuthResult>("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ name, password }),
   });
 }

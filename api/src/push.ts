@@ -54,6 +54,51 @@ export async function sendPingPush(
     senderName: string;
   },
 ): Promise<void> {
+  await sendPushToUsers(prisma, {
+    recipientIds: input.recipientIds,
+    title: `${PRIORITY_LABEL[input.priority] ?? "Ping"} · ${input.senderName}`,
+    body: input.message,
+    tag: `ping-${Date.now()}`,
+  });
+}
+
+const MEETING_SCOPE_LABEL: Record<string, string> = {
+  GLOBAL: "pre všetkých",
+  GROUP: "pre skupinu",
+  SELECTED: "pre vybraných",
+};
+
+export async function sendMeetingPointPush(
+  prisma: PrismaClient,
+  input: {
+    recipientIds: string[];
+    title: string;
+    scope: string;
+    creatorName: string;
+  },
+): Promise<void> {
+  const scopeLabel = MEETING_SCOPE_LABEL[input.scope] ?? "";
+  await sendPushToUsers(prisma, {
+    recipientIds: input.recipientIds,
+    title: `Zraz · ${input.creatorName}`,
+    body: scopeLabel
+      ? `Nový bod stretnutia ${scopeLabel}: ${input.title}`
+      : `Nový bod stretnutia: ${input.title}`,
+    tag: `meeting-${Date.now()}`,
+    url: "/",
+  });
+}
+
+async function sendPushToUsers(
+  prisma: PrismaClient,
+  input: {
+    recipientIds: string[];
+    title: string;
+    body: string;
+    tag: string;
+    url?: string;
+  },
+): Promise<void> {
   if (!pushEnabled || input.recipientIds.length === 0) return;
 
   const subs = await prisma.pushSubscription.findMany({
@@ -62,10 +107,10 @@ export async function sendPingPush(
   if (subs.length === 0) return;
 
   const payload = JSON.stringify({
-    title: `${PRIORITY_LABEL[input.priority] ?? "Ping"} · ${input.senderName}`,
-    body: input.message,
-    url: "/",
-    tag: `ping-${Date.now()}`,
+    title: input.title,
+    body: input.body,
+    url: input.url ?? "/",
+    tag: input.tag,
   });
 
   await Promise.allSettled(

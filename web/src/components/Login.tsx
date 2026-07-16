@@ -1,61 +1,43 @@
-import { useEffect, useState } from "react";
-import {
-  fetchLanUsers,
-  fetchMeta,
-  loginViaLan,
-  loginWithGoogleUrl,
-  setToken,
-  type LanUser,
-} from "../lib/api";
-import { isPrivateHostname } from "../lib/network";
-import { GoogleG } from "./icons";
-import { Avatar, RoleBadge } from "./ui";
-import type { Role } from "../lib/types";
+import { useState } from "react";
+import { loginWithPassword, registerWithPassword, setToken } from "../lib/api";
+
+function parseAuthError(e: unknown): string {
+  if (!(e instanceof Error)) return "Prihlásenie zlyhalo";
+  try {
+    const body = JSON.parse(e.message) as { detail?: string; error?: string };
+    return body.detail ?? body.error ?? e.message;
+  } catch {
+    return e.message;
+  }
+}
 
 export function Login({
   error,
-  onLanLogin,
+  onLogin,
 }: {
   error: string | null;
-  onLanLogin: (token: string) => void;
+  onLogin: (token: string) => void;
 }) {
-  const [lanUsers, setLanUsers] = useState<LanUser[]>([]);
-  const [lanLoading, setLanLoading] = useState(false);
-  const [lanError, setLanError] = useState<string | null>(null);
-  const [showLan, setShowLan] = useState(isPrivateHostname());
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const meta = await fetchMeta();
-        if (!cancelled && (meta.lanLoginAvailable || isPrivateHostname())) {
-          setShowLan(true);
-          setLanLoading(true);
-          const users = await fetchLanUsers();
-          if (!cancelled) setLanUsers(users);
-        }
-      } catch {
-        if (!cancelled && isPrivateHostname()) {
-          setLanError("LAN prihlásenie nie je dostupné. Skontroluj, či beží API.");
-        }
-      } finally {
-        if (!cancelled) setLanLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const pickUser = async (userId: string) => {
-    setLanError(null);
+  const submit = async () => {
+    setFormError(null);
+    setBusy(true);
     try {
-      const { token } = await loginViaLan(userId);
-      setToken(token);
-      onLanLogin(token);
+      const result =
+        mode === "register"
+          ? await registerWithPassword(name, password)
+          : await loginWithPassword(name, password);
+      setToken(result.token);
+      onLogin(result.token);
     } catch (e) {
-      setLanError(e instanceof Error ? e.message : "Prihlásenie zlyhalo");
+      setFormError(parseAuthError(e));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -69,60 +51,81 @@ export function Login({
             Živá mapa, stretnutia a rýchla koordinácia celej skupiny na jednom mieste.
           </p>
         </div>
-        {(error || lanError) && <div className="auth__error">{error ?? lanError}</div>}
 
-        {showLan && (
-          <div className="lan-login">
-            <p className="section-title" style={{ margin: "0 0 8px" }}>
-              Prihlásenie v lokálnej sieti
-            </p>
-            <p className="hint" style={{ marginBottom: 12 }}>
-              Na telefóne vyber svoje meno. Najprv sa raz prihlás cez Google na PC, aby tu bolo koho
-              vybrať.
-            </p>
-            {lanLoading ? (
-              <div className="center-screen" style={{ height: 120 }}>
-                <div className="spinner" />
-              </div>
-            ) : lanUsers.length === 0 ? (
-              <p className="hint">Zatiaľ žiadni používatelia. Prihlás sa najprv na PC cez Google.</p>
-            ) : (
-              <div className="lan-users">
-                {lanUsers.map((u) => (
-                  <button key={u.id} className="lan-user-btn" onClick={() => pickUser(u.id)}>
-                    <Avatar name={u.name} small />
-                    <span className="grow" style={{ textAlign: "left" }}>
-                      <strong>{u.name}</strong>
-                    </span>
-                    <RoleBadge role={u.role as Role} />
-                  </button>
-                ))}
-              </div>
-            )}
+        {(error || formError) && <div className="auth__error">{error ?? formError}</div>}
+
+        <div className="stack">
+          <div className="field">
+            <span className="field__label">Unikátne meno</span>
+            <input
+              className="input"
+              value={name}
+              autoComplete="username"
+              autoCapitalize="words"
+              onChange={(e) => setName(e.target.value)}
+              placeholder="napr. Petra"
+              disabled={busy}
+            />
           </div>
-        )}
-
-        {!isPrivateHostname() && (
-          <>
-            {showLan && <div className="auth-divider">alebo</div>}
-            <button
-              className="google-btn"
-              onClick={() => (window.location.href = loginWithGoogleUrl())}
-            >
-              <GoogleG size={20} />
-              Prihlásiť sa cez Google
-            </button>
-          </>
-        )}
-
-        {isPrivateHostname() && (
-          <p className="hint" style={{ textAlign: "center" }}>
-            Google prihlásenie na IP adrese v sieti Google nepovoľuje. Použi výber mena vyššie.
-          </p>
-        )}
+          <div className="field">
+            <span className="field__label">Heslo</span>
+            <input
+              className="input"
+              type="password"
+              value={password}
+              autoComplete={mode === "register" ? "new-password" : "current-password"}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="aspoň 6 znakov"
+              disabled={busy}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void submit();
+              }}
+            />
+          </div>
+          <button
+            className="btn btn--primary btn--block"
+            disabled={busy || name.trim().length < 2 || password.length < 6}
+            onClick={() => void submit()}
+          >
+            {busy ? "Čakaj…" : mode === "register" ? "Vytvoriť účet" : "Prihlásiť sa"}
+          </button>
+        </div>
 
         <p className="hint" style={{ textAlign: "center" }}>
-          Prihlásením súhlasíš so zdieľaním polohy so svojou skupinou počas akcie.
+          {mode === "login" ? (
+            <>
+              Nemáš účet?{" "}
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => {
+                  setMode("register");
+                  setFormError(null);
+                }}
+              >
+                Zaregistruj sa
+              </button>
+            </>
+          ) : (
+            <>
+              Už máš účet?{" "}
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => {
+                  setMode("login");
+                  setFormError(null);
+                }}
+              >
+                Prihlás sa
+              </button>
+            </>
+          )}
+        </p>
+
+        <p className="hint" style={{ textAlign: "center" }}>
+          Prihlásením súhlasíš so zdieľaním polohy so svojou skupinou počas akcie. Prvý účet je
+          admin.
         </p>
       </div>
     </div>
