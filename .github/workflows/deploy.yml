@@ -24,8 +24,16 @@ jobs:
             BRANCH="${{ github.ref_name }}"
 
             if [ ! -d "$APP_DIR/.git" ]; then
-              mkdir -p "$APP_DIR"
+              ENV_BACKUP=""
+              if [ -f "$APP_DIR/.env" ]; then
+                ENV_BACKUP="$(mktemp)"
+                cp "$APP_DIR/.env" "$ENV_BACKUP"
+              fi
+              rm -rf "$APP_DIR"
               git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
+              if [ -n "$ENV_BACKUP" ] && [ -f "$ENV_BACKUP" ]; then
+                mv "$ENV_BACKUP" "$APP_DIR/.env"
+              fi
             fi
 
             cd "$APP_DIR"
