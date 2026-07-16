@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "./api";
 import { formatDistance, formatWalkingDuration } from "./geo";
-import { resolveMeetingTargetUserIds } from "./meetingTargets";
 import { logRouteError, logRouteRequest, logRouteSuccess, routeLog } from "./routeDebug";
 import type { Group, LatLng, LocationRow, MeetingPoint, SearchUser } from "./types";
 
@@ -175,8 +174,8 @@ export function useMeetingRoutePaths(
   activeMeeting: MeetingPoint | null,
   routeUserIds: string[],
   locations: LocationRow[],
-  users: SearchUser[],
-  groups: Group[],
+  _users: SearchUser[],
+  _groups: Group[],
 ): { routes: MeetingRouteLine[]; routeError: string | null } {
   const [routes, setRoutes] = useState<MeetingRouteLine[]>([]);
   const [routeError, setRouteError] = useState<string | null>(null);
@@ -198,14 +197,14 @@ export function useMeetingRoutePaths(
       return;
     }
 
-    const targetIds = new Set(resolveMeetingTargetUserIds(activeMeeting, users, groups));
     let cancelled = false;
 
     const load = async () => {
-      const pending = routeUserIds.filter((userId) => {
-        if (!targetIds.has(userId)) return false;
-        return locations.some((l) => l.userId === userId);
-      });
+      // Caller (mapa) už rozhodol, koho trasu zobraziť – nefiltruj podľa targetIds
+      // (tvoja navigácia k zrazu má fungovať aj keď zraz nie je „pre teba“).
+      const pending = routeUserIds.filter((userId) =>
+        locations.some((l) => l.userId === userId),
+      );
 
       setRouteError(null);
       setRoutes(
@@ -289,8 +288,7 @@ export function useMeetingRoutePaths(
     activeMeeting?.longitude,
     routeUserIds.join(","),
     routeOriginsKey,
-    users,
-    groups,
+    // locations is covered via routeOriginsKey; keep meeting fields above
   ]);
 
   return { routes, routeError };

@@ -89,7 +89,8 @@ export function MapView({ isActive }: { isActive: boolean }) {
   const [filter, setFilter] = useState<Filter>("ALL");
   const [peek, setPeek] = useState<LocationRow | null>(null);
   const [peekRouteOn, setPeekRouteOn] = useState(false);
-  const [peekRoutePromptDismissed, setPeekRoutePromptDismissed] = useState(false);
+  const [myRouteHidden, setMyRouteHidden] = useState(false);
+  const [meetingRoutePromptDismissed, setMeetingRoutePromptDismissed] = useState(false);
   const [showActions, setShowActions] = useState(false);
   const [pickPurpose, setPickPurpose] = useState<"create" | "move" | null>(null);
   const [pickedPos, setPickedPos] = useState<LatLng | null>(null);
@@ -141,9 +142,10 @@ export function MapView({ isActive }: { isActive: boolean }) {
     [locations, user?.id],
   );
   const canShowMyRoute = Boolean(
-    activeMeeting && user && meetingTargetIds.has(user.id) && canShowRouteForLocation(myLoc),
+    activeMeeting && user && canShowRouteForLocation(myLoc),
   );
   const myRouteOn = Boolean(user && routeUserIds.includes(user.id));
+  const iAmMeetingTarget = Boolean(user && meetingTargetIds.has(user.id));
 
   const peekFresh = useMemo(() => {
     if (!peek) return null;
@@ -177,7 +179,6 @@ export function MapView({ isActive }: { isActive: boolean }) {
     (loc: LocationRow) => {
       pulse(loc.userId);
       setPeek(loc);
-      setPeekRoutePromptDismissed(false);
       const canRoute =
         Boolean(activeMeeting) &&
         meetingTargetIds.has(loc.userId) &&
@@ -197,14 +198,14 @@ export function MapView({ isActive }: { isActive: boolean }) {
     });
   }, []);
 
-  // Pri aktívnom zraze: vždy moja trasa (ak ide); + voliteľne jemná trasa peeknutého.
+  // Pri aktívnom zraze: moja trasa (ak ide a nie je skrytá); + voliteľne jemná trasa peeknutého.
   useEffect(() => {
     if (!activeMeeting || !user) {
       setRouteUserIds([]);
       return;
     }
     const next: string[] = [];
-    if (canShowMyRoute) next.push(user.id);
+    if (canShowMyRoute && !myRouteHidden) next.push(user.id);
     if (
       peekRouteOn &&
       peekFresh &&
@@ -219,10 +220,16 @@ export function MapView({ isActive }: { isActive: boolean }) {
     activeMeeting,
     user,
     canShowMyRoute,
+    myRouteHidden,
     peekRouteOn,
     peekFresh,
     meetingTargetIds,
   ]);
+
+  useEffect(() => {
+    setMyRouteHidden(false);
+    setMeetingRoutePromptDismissed(false);
+  }, [activeMeetingId]);
 
   useEffect(() => {
     if (!activeMeetingId) {
@@ -257,7 +264,6 @@ export function MapView({ isActive }: { isActive: boolean }) {
   useEffect(() => {
     if (!peek) {
       setPeekRouteOn(false);
-      setPeekRoutePromptDismissed(false);
     }
   }, [peek]);
 
@@ -426,15 +432,13 @@ export function MapView({ isActive }: { isActive: boolean }) {
   const closePeek = () => {
     setPeek(null);
     setPeekRouteOn(false);
-    setPeekRoutePromptDismissed(false);
   };
 
-  const showPeekRoutePrompt = Boolean(
-    peekFresh &&
-      peekCanRoute &&
-      peekFresh.userId !== user?.id &&
-      !peekRouteOn &&
-      !peekRoutePromptDismissed &&
+  const showMeetingRoutePrompt = Boolean(
+    activeMeeting &&
+      canShowMyRoute &&
+      !myRouteOn &&
+      !meetingRoutePromptDismissed &&
       !pickMode,
   );
 
@@ -677,13 +681,13 @@ export function MapView({ isActive }: { isActive: boolean }) {
                 />
               );
             })}
-          {showPeekRoutePrompt && peekFresh && (
+          {showMeetingRoutePrompt && activeMeeting && (
             <OverlayViewF
-              position={{ lat: peekFresh.latitude, lng: peekFresh.longitude }}
+              position={{ lat: activeMeeting.latitude, lng: activeMeeting.longitude }}
               mapPaneName={OverlayView.OVERLAY_MOUSE_TARGET}
-              getPixelPositionOffset={(width, height) => ({
-                x: -(width / 2),
-                y: -(height + 28),
+              getPixelPositionOffset={(_width, height) => ({
+                x: 22,
+                y: -(height / 2),
               })}
             >
               <div className="map-route-prompt">
@@ -691,8 +695,8 @@ export function MapView({ isActive }: { isActive: boolean }) {
                   type="button"
                   className="map-route-prompt__action"
                   onClick={() => {
-                    setPeekRouteOn(true);
-                    setPeekRoutePromptDismissed(false);
+                    setMyRouteHidden(false);
+                    setMeetingRoutePromptDismissed(false);
                   }}
                 >
                   Zobraziť trasu
@@ -701,7 +705,7 @@ export function MapView({ isActive }: { isActive: boolean }) {
                   type="button"
                   className="map-route-prompt__dismiss"
                   aria-label="Skryť ponuku"
-                  onClick={() => setPeekRoutePromptDismissed(true)}
+                  onClick={() => setMeetingRoutePromptDismissed(true)}
                 >
                   <CloseIcon size={14} />
                 </button>
@@ -726,177 +730,202 @@ export function MapView({ isActive }: { isActive: boolean }) {
         </div>
       )}
 
-      {activeMeeting && !pickMode && (
+      {(activeMeeting || peekFresh) && !pickMode && (
         <div className="map-overlay-bottom-left">
           <div className="map-route-nav">
-            <div className="map-route-nav__head">
-              <div className="map-route-nav__info">
-                <span className="map-route-nav__title">
-                  {activeMeeting.title}
-                  {canShowMyRoute ? " · tvoja trasa" : " · navigácia k zrazu"}
-                </span>
-                {myRouteOn && (
-                  <span className="map-route-nav__meta" role="status" aria-live="polite">
-                    {myRouteLoading ? (
-                      <>
-                        <span className="spinner spinner--sm" aria-hidden />
-                        počítam trasu…
-                      </>
-                    ) : myEta && myDistance ? (
-                      <>
-                        <span className="map-route-nav__eta">{myEta}</span>
-                        <span className="map-route-nav__sep">·</span>
-                        <span className="map-route-nav__dist">{myDistance}</span>
-                      </>
-                    ) : myEta ? (
-                      <span className="map-route-nav__eta">{myEta}</span>
-                    ) : (
-                      <span className="map-route-nav__eta map-route-nav__eta--muted">—</span>
-                    )}
-                  </span>
-                )}
-              </div>
-              <button className="btn btn--icon" onClick={clearActiveMeeting} aria-label="Skryť navigáciu">
-                <CloseIcon size={16} />
-              </button>
-            </div>
-            <div className="map-route-nav__actions">
-              <button
-                className="btn btn--sm btn--ghost"
-                onClick={() => setMeetingDetail(activeMeeting)}
-              >
-                Zoznam
-              </button>
-            </div>
-            {!canShowMyRoute &&
-              user &&
-              meetingTargetIds.has(user.id) &&
-              !canShowRouteForLocation(myLoc) && (
-                <p className="map-route-nav__hint map-route-nav__hint--warn">
-                  {noRouteLocationHint(true)}
-                </p>
-              )}
-            {canShowMyRoute && myLoc && !isLocationLive(myLoc) && (
-              <p className="map-route-nav__hint map-route-nav__hint--warn">
-                {staleLocationRouteHint(true)}
-              </p>
-            )}
-            {!routeError && myRouteOn && !myEta && !myRouteLoading && Boolean(myRouteLine) && (
-              <p className="map-route-nav__hint map-route-nav__hint--warn">
-                Nepodarilo sa vypočítať ETA trasy.
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {peekFresh && !pickMode && (
-        <div className="map-overlay-bottom-right">
-          <div className="map-peek">
-            <div className="map-peek__head">
-              <div className="map-peek__who">
-                <Avatar name={peekFresh.user.name} />
-                <div className="grow" style={{ minWidth: 0 }}>
-                  <div className="map-peek__name">
-                    {peekFresh.userId === user?.id
-                      ? `${peekFresh.user.name} (ty)`
-                      : peekFresh.user.name}
-                    {peekFresh.userId === user?.id && (
-                      <span className="badge badge--me">Ja</span>
-                    )}
-                  </div>
-                  <div className="map-peek__sub">
-                    <StatusDot status={peekFresh.status} />
-                    {peekFresh.status === "online" ? "Online" : "Posledná poloha"}
-                    <span>· {fromNow(peekFresh.updatedAt)}</span>
-                  </div>
-                  <RoleBadge role={peekFresh.user.role} />
-                </div>
-              </div>
-              <button className="btn btn--icon" onClick={closePeek} aria-label="Zavrieť">
-                <CloseIcon size={16} />
-              </button>
-            </div>
-
-            {peekFresh.userId !== user?.id && activeMeeting && meetingTargetIds.has(peekFresh.userId) && (
-              <div className="map-peek__route">
-                {peekCanRoute ? (
-                  <>
-                    {peekRouteOn ? (
-                      <div className="map-peek__route-meta" role="status" aria-live="polite">
-                        {peekRouteLoading ? (
+            {activeMeeting && (
+              <>
+                <div className="map-route-nav__head">
+                  <div className="map-route-nav__info">
+                    <span className="map-route-nav__title">
+                      {activeMeeting.title}
+                      {canShowMyRoute ? " · tvoja trasa" : " · navigácia k zrazu"}
+                    </span>
+                    {myRouteOn && (
+                      <span className="map-route-nav__meta" role="status" aria-live="polite">
+                        {myRouteLoading ? (
                           <>
                             <span className="spinner spinner--sm" aria-hidden />
-                            počítam jemnú trasu…
+                            počítam trasu…
                           </>
-                        ) : peekEta && peekDistance ? (
+                        ) : myEta && myDistance ? (
                           <>
-                            <span className="map-peek__eta">{peekEta}</span>
-                            <span className="map-peek__sep">·</span>
-                            <span>{peekDistance}</span>
+                            <span className="map-route-nav__eta">{myEta}</span>
+                            <span className="map-route-nav__sep">·</span>
+                            <span className="map-route-nav__dist">{myDistance}</span>
                           </>
-                        ) : peekEta ? (
-                          <span className="map-peek__eta">{peekEta}</span>
+                        ) : myEta ? (
+                          <span className="map-route-nav__eta">{myEta}</span>
                         ) : (
-                          <span className="muted">Trasa na mape</span>
+                          <span className="map-route-nav__eta map-route-nav__eta--muted">—</span>
                         )}
-                      </div>
-                    ) : (
-                      <p className="map-peek__hint">Trasa je skrytá.</p>
+                      </span>
                     )}
-                    {!isLocationLive(peekFresh) && peekRouteOn && (
-                      <p className="map-peek__hint map-peek__hint--warn">
-                        {staleLocationRouteHint(false)}
-                      </p>
-                    )}
+                  </div>
+                  <button
+                    className="btn btn--icon"
+                    onClick={() => {
+                      clearActiveMeeting();
+                      closePeek();
+                    }}
+                    aria-label="Skryť navigáciu"
+                  >
+                    <CloseIcon size={16} />
+                  </button>
+                </div>
+                <div className="map-route-nav__actions">
+                  {canShowMyRoute && (
                     <button
                       type="button"
-                      className={`btn btn--sm${peekRouteOn ? "" : " btn--primary"}`}
+                      className="btn btn--sm btn--ghost"
                       onClick={() => {
-                        if (peekRouteOn) {
-                          setPeekRouteOn(false);
-                          setPeekRoutePromptDismissed(false);
+                        if (myRouteOn) {
+                          setMyRouteHidden(true);
+                          setMeetingRoutePromptDismissed(false);
                         } else {
-                          setPeekRouteOn(true);
-                          setPeekRoutePromptDismissed(false);
+                          setMyRouteHidden(false);
+                          setMeetingRoutePromptDismissed(false);
                         }
                       }}
                     >
-                      {peekRouteOn ? "Skryť trasu" : "Zobraziť trasu"}
+                      {myRouteOn ? "Skryť trasu" : "Zobraziť trasu"}
                     </button>
-                  </>
-                ) : (
-                  <p className="map-peek__hint map-peek__hint--warn">
-                    {noRouteLocationHint(false)}
+                  )}
+                  <button
+                    className="btn btn--sm btn--ghost"
+                    onClick={() => setMeetingDetail(activeMeeting)}
+                  >
+                    Zoznam
+                  </button>
+                </div>
+                {!canShowMyRoute && user && (
+                  <p className="map-route-nav__hint map-route-nav__hint--warn">
+                    {noRouteLocationHint(true)}
                   </p>
                 )}
-              </div>
+                {canShowMyRoute && myLoc && !isLocationLive(myLoc) && (
+                  <p className="map-route-nav__hint map-route-nav__hint--warn">
+                    {staleLocationRouteHint(true)}
+                  </p>
+                )}
+                {canShowMyRoute && !iAmMeetingTarget && (
+                  <p className="map-route-nav__hint">
+                    Tento zraz nie je priamo pre teba – trasa je len na navigáciu.
+                  </p>
+                )}
+                {!routeError && myRouteOn && !myEta && !myRouteLoading && Boolean(myRouteLine) && (
+                  <p className="map-route-nav__hint map-route-nav__hint--warn">
+                    Nepodarilo sa vypočítať ETA trasy.
+                  </p>
+                )}
+              </>
             )}
 
-            <div className="map-peek__actions">
-              <button
-                className="btn grow"
-                onClick={centerOnPeek}
-                disabled={peekCenterBusy}
-              >
-                {peekCenterBusy ? "Centrujem…" : "Vycentrovať"}
-              </button>
-              {peekFresh.userId !== user?.id && (
-                <button
-                  className="btn btn--primary grow"
-                  onClick={() => {
-                    openPing({
-                      scope: "USER",
-                      targetIds: [peekFresh.userId],
-                      label: peekFresh.user.name,
-                    });
-                    closePeek();
-                  }}
-                >
-                  Pingnúť
-                </button>
-              )}
-            </div>
+            {peekFresh && (
+              <div className={`map-route-nav__member${activeMeeting ? " map-route-nav__member--sep" : ""}`}>
+                <div className="map-route-nav__head">
+                  <div className="map-route-nav__who">
+                    <Avatar name={peekFresh.user.name} />
+                    <div className="grow" style={{ minWidth: 0 }}>
+                      <span className="map-route-nav__title">
+                        {peekFresh.userId === user?.id
+                          ? `${peekFresh.user.name} (ty)`
+                          : peekFresh.user.name}
+                        {peekFresh.userId === user?.id && (
+                          <span className="badge badge--me">Ja</span>
+                        )}
+                      </span>
+                      <span className="map-route-nav__member-sub">
+                        <StatusDot status={peekFresh.status} />
+                        {peekFresh.status === "online" ? "Online" : "Posledná poloha"}
+                        <span>· {fromNow(peekFresh.updatedAt)}</span>
+                      </span>
+                      <RoleBadge role={peekFresh.user.role} />
+                    </div>
+                  </div>
+                  <button className="btn btn--icon" onClick={closePeek} aria-label="Zavrieť výber člena">
+                    <CloseIcon size={16} />
+                  </button>
+                </div>
+
+                {peekFresh.userId !== user?.id &&
+                  activeMeeting &&
+                  meetingTargetIds.has(peekFresh.userId) && (
+                    <>
+                      {peekCanRoute ? (
+                        <>
+                          {peekRouteOn && (
+                            <span className="map-route-nav__meta map-route-nav__meta--peer" role="status">
+                              {peekRouteLoading ? (
+                                <>
+                                  <span className="spinner spinner--sm" aria-hidden />
+                                  počítam trasu…
+                                </>
+                              ) : peekEta && peekDistance ? (
+                                <>
+                                  <span className="map-route-nav__peer-eta">{peekEta}</span>
+                                  <span className="map-route-nav__sep">·</span>
+                                  <span>{peekDistance}</span>
+                                  <span className="map-route-nav__peer-label">jemná trasa</span>
+                                </>
+                              ) : peekEta ? (
+                                <span className="map-route-nav__peer-eta">{peekEta}</span>
+                              ) : (
+                                <span className="map-route-nav__eta map-route-nav__eta--muted">—</span>
+                              )}
+                            </span>
+                          )}
+                          {!isLocationLive(peekFresh) && peekRouteOn && (
+                            <p className="map-route-nav__hint map-route-nav__hint--warn">
+                              {staleLocationRouteHint(false)}
+                            </p>
+                          )}
+                        </>
+                      ) : (
+                        <p className="map-route-nav__hint map-route-nav__hint--warn">
+                          {noRouteLocationHint(false)}
+                        </p>
+                      )}
+                    </>
+                  )}
+
+                <div className="map-route-nav__actions">
+                  {peekFresh.userId !== user?.id &&
+                    activeMeeting &&
+                    peekCanRoute && (
+                      <button
+                        type="button"
+                        className="btn btn--sm btn--ghost"
+                        onClick={() => setPeekRouteOn((v) => !v)}
+                      >
+                        {peekRouteOn ? "Skryť jeho trasu" : "Zobraziť jeho trasu"}
+                      </button>
+                    )}
+                  <button
+                    className="btn btn--sm"
+                    onClick={centerOnPeek}
+                    disabled={peekCenterBusy}
+                  >
+                    {peekCenterBusy ? "Centrujem…" : "Vycentrovať"}
+                  </button>
+                  {peekFresh.userId !== user?.id && (
+                    <button
+                      className="btn btn--sm btn--primary"
+                      onClick={() => {
+                        openPing({
+                          scope: "USER",
+                          targetIds: [peekFresh.userId],
+                          label: peekFresh.user.name,
+                        });
+                        closePeek();
+                      }}
+                    >
+                      Pingnúť
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1001,8 +1030,14 @@ export function MapView({ isActive }: { isActive: boolean }) {
           onToggleRoute={() => {
             if (meetingDetail.id !== activeMeetingId) {
               focusMeeting(meetingDetail.id);
+              setMyRouteHidden(false);
+              setMeetingRoutePromptDismissed(false);
+            } else if (myRouteOn) {
+              setMyRouteHidden(true);
+              setMeetingRoutePromptDismissed(false);
             } else {
-              clearActiveMeeting();
+              setMyRouteHidden(false);
+              setMeetingRoutePromptDismissed(false);
             }
             setMeetingDetail(null);
           }}
