@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { GoogleMap, MarkerF, PolylineF, useJsApiLoader } from "@react-google-maps/api";
+import { GoogleMap, MarkerF, OverlayView, OverlayViewF, PolylineF, useJsApiLoader } from "@react-google-maps/api";
 import { MAPS_KEY, apiFetch } from "../lib/api";
 import { useCoordinator } from "../lib/coordinator";
 import { centerMap } from "../lib/mapCenter";
-import { formatRouteDistanceLabel, formatRouteEta, formatRouteSummary, useMeetingRoutePaths } from "../lib/meetingRoutes";
+import { formatRouteDistanceLabel, formatRouteEta, useMeetingRoutePaths } from "../lib/meetingRoutes";
 import { resolveMeetingTargetUserIds } from "../lib/meetingTargets";
 import { canShowRouteForLocation, isLocationLive, noRouteLocationHint, staleLocationRouteHint } from "../lib/locationFreshness";
 import { canManageMeetingPoint } from "../lib/meetingPermissions";
@@ -20,7 +20,6 @@ import { CloseIcon, LayersIcon, MapIcon, PlusIcon, SatelliteIcon, TargetIcon } f
 const LIBRARIES: "places"[] = ["places"];
 const DEFAULT_CENTER = { lat: 43.0707, lng: 12.6197 };
 const MAP_LAYER_STORAGE_KEY = "mapLayerMode";
-const SHOW_ALL_ROUTES_KEY = "mapShowAllRoutes";
 
 type MapLayerMode = "roadmap" | "satellite" | "hybrid";
 
@@ -35,13 +34,6 @@ const MAP_LAYER_LABEL: Record<MapLayerMode, string> = {
 function readMapLayerMode(): MapLayerMode {
   const stored = localStorage.getItem(MAP_LAYER_STORAGE_KEY);
   return MAP_LAYER_CYCLE.includes(stored as MapLayerMode) ? (stored as MapLayerMode) : "roadmap";
-}
-
-function readShowAllRoutes(): boolean {
-  const stored = localStorage.getItem(SHOW_ALL_ROUTES_KEY);
-  if (stored === "0") return false;
-  if (stored === "1") return true;
-  return true;
 }
 
 function sameIdSet(a: string[], b: string[]): boolean {
@@ -95,7 +87,9 @@ export function MapView({ isActive }: { isActive: boolean }) {
   const didInitialCenterRef = useRef(false);
   const staticCenterRef = useRef(DEFAULT_CENTER);
   const [filter, setFilter] = useState<Filter>("ALL");
-  const [detail, setDetail] = useState<LocationRow | null>(null);
+  const [peek, setPeek] = useState<LocationRow | null>(null);
+  const [peekRouteOn, setPeekRouteOn] = useState(false);
+  const [peekRoutePromptDismissed, setPeekRoutePromptDismissed] = useState(false);
   const [showActions, setShowActions] = useState(false);
   const [pickPurpose, setPickPurpose] = useState<"create" | "move" | null>(null);
   const [pickedPos, setPickedPos] = useState<LatLng | null>(null);
@@ -104,12 +98,10 @@ export function MapView({ isActive }: { isActive: boolean }) {
   const [recenterMsg, setRecenterMsg] = useState<string | null>(null);
   const [recenterBusy, setRecenterBusy] = useState(false);
   const [centering, setCentering] = useState<{ targetId: string; label: string } | null>(null);
-  const [detailCenterBusy, setDetailCenterBusy] = useState(false);
+  const [peekCenterBusy, setPeekCenterBusy] = useState(false);
   const [meetingDetail, setMeetingDetail] = useState<MeetingPoint | null>(null);
   const [clusterPick, setClusterPick] = useState<LocationRow[] | null>(null);
   const [routeUserIds, setRouteUserIds] = useState<string[]>([]);
-  const [highlightUserId, setHighlightUserId] = useState<string | null>(null);
-  const [showAllRoutes, setShowAllRoutes] = useState(() => readShowAllRoutes());
   const [mapLayer, setMapLayer] = useState<MapLayerMode>(() => readMapLayerMode());
   const { pulse, isPulsing } = useTapPulse();
 
@@ -144,73 +136,57 @@ export function MapView({ isActive }: { isActive: boolean }) {
     return new Set(resolveMeetingTargetUserIds(activeMeeting, users, groups));
   }, [activeMeeting, users, groups]);
 
-  const eligibleRouteUserIds = useMemo(() => {
-    return [...meetingTargetIds].filter((id) => {
-      const loc = locations.find((l) => l.userId === id);
-      return canShowRouteForLocation(loc);
-    });
-  }, [meetingTargetIds, locations]);
-
   const myLoc = useMemo(
     () => (user ? locations.find((l) => l.userId === user.id) : undefined),
     [locations, user?.id],
   );
-  const canFocusMyRoute = Boolean(
+  const canShowMyRoute = Boolean(
     activeMeeting && user && meetingTargetIds.has(user.id) && canShowRouteForLocation(myLoc),
   );
-  const highlightIsMe = Boolean(user && highlightUserId === user.id);
+  const myRouteOn = Boolean(user && routeUserIds.includes(user.id));
 
-  const primaryRoute = useMemo(() => {
-    const focusId = highlightUserId && routeUserIds.includes(highlightUserId) ? highlightUserId : null;
-    const line = focusId
-      ? routeLines.find((l) => l.userId === focusId)
-      : routeLines.find((l) => l.userId === user?.id) ?? routeLines[0];
-    if (!line) return null;
-    const who =
-      line.userId === user?.id ? null : (users.find((u) => u.id === line.userId)?.name ?? "Člen");
-    return { line, who };
-  }, [highlightUserId, routeLines, routeUserIds, user?.id, users]);
+  const peekFresh = useMemo(() => {
+    if (!peek) return null;
+    return locations.find((l) => l.userId === peek.userId) ?? peek;
+  }, [peek, locations]);
 
-  const primaryEta = primaryRoute ? formatRouteEta(primaryRoute.line) : null;
-  const primaryDistance = primaryRoute ? formatRouteDistanceLabel(primaryRoute.line) : null;
-  const primaryLoading = primaryRoute?.line.loading ?? false;
-
-  const otherRouteSummaries = useMemo(() => {
-    const focusId = primaryRoute?.line.userId;
-    return routeLines
-      .filter((l) => l.userId !== focusId && routeUserIds.includes(l.userId))
-      .map((line) => ({
-        userId: line.userId,
-        name:
-          line.userId === user?.id
-            ? "Ty"
-            : (users.find((u) => u.id === line.userId)?.name ?? "Člen"),
-        summary: formatRouteSummary(line),
-        durationSeconds: line.durationSeconds,
-      }))
-      .filter((x) => x.summary)
-      .sort((a, b) => (b.durationSeconds ?? 0) - (a.durationSeconds ?? 0))
-      .slice(0, 6);
-  }, [routeLines, routeUserIds, user?.id, users, primaryRoute]);
-
-  const selectRouteFocus = useCallback(
-    (userId: string) => {
-      if (!activeMeeting || !meetingTargetIds.has(userId)) return false;
-      const loc = locations.find((l) => l.userId === userId);
-      if (!canShowRouteForLocation(loc)) return false;
-      setHighlightUserId(userId);
-      return true;
-    },
-    [activeMeeting, meetingTargetIds, locations],
+  const peekCanRoute = Boolean(
+    activeMeeting &&
+      peekFresh &&
+      meetingTargetIds.has(peekFresh.userId) &&
+      canShowRouteForLocation(peekFresh),
   );
 
-  const toggleShowAllRoutes = useCallback(() => {
-    setShowAllRoutes((prev) => {
-      const next = !prev;
-      localStorage.setItem(SHOW_ALL_ROUTES_KEY, next ? "1" : "0");
-      return next;
-    });
-  }, []);
+  const myRouteLine = useMemo(
+    () => (user ? routeLines.find((l) => l.userId === user.id) : undefined),
+    [routeLines, user?.id],
+  );
+  const peekRouteLine = useMemo(
+    () => (peekFresh ? routeLines.find((l) => l.userId === peekFresh.userId) : undefined),
+    [routeLines, peekFresh],
+  );
+
+  const myEta = myRouteLine ? formatRouteEta(myRouteLine) : null;
+  const myDistance = myRouteLine ? formatRouteDistanceLabel(myRouteLine) : null;
+  const myRouteLoading = myRouteLine?.loading ?? false;
+  const peekEta = peekRouteLine ? formatRouteEta(peekRouteLine) : null;
+  const peekDistance = peekRouteLine ? formatRouteDistanceLabel(peekRouteLine) : null;
+  const peekRouteLoading = peekRouteLine?.loading ?? false;
+
+  const openPeek = useCallback(
+    (loc: LocationRow) => {
+      pulse(loc.userId);
+      setPeek(loc);
+      setPeekRoutePromptDismissed(false);
+      const canRoute =
+        Boolean(activeMeeting) &&
+        meetingTargetIds.has(loc.userId) &&
+        canShowRouteForLocation(loc);
+      // Pri aktívnom zraze rovno jemná trasa (nie moja – tá je už výrazná).
+      setPeekRouteOn(canRoute && loc.userId !== user?.id);
+    },
+    [activeMeeting, meetingTargetIds, pulse, user?.id],
+  );
 
   const cycleMapLayer = useCallback(() => {
     setMapLayer((prev) => {
@@ -221,66 +197,69 @@ export function MapView({ isActive }: { isActive: boolean }) {
     });
   }, []);
 
-  // Pri výbere zrazu nastav fokus (predvolene ja).
+  // Pri aktívnom zraze: vždy moja trasa (ak ide); + voliteľne jemná trasa peeknutého.
   useEffect(() => {
-    if (!activeMeetingId || !user) {
-      setRouteUserIds([]);
-      setHighlightUserId(null);
-      return;
-    }
-    const meeting = meetingPoints.find((m) => m.id === activeMeetingId);
-    if (!meeting) {
-      setRouteUserIds([]);
-      setHighlightUserId(null);
-      return;
-    }
-    const targets = resolveMeetingTargetUserIds(meeting, users, groups);
-    const myOk =
-      targets.includes(user.id) &&
-      canShowRouteForLocation(locations.find((l) => l.userId === user.id));
-    const firstOther = targets.find((id) => {
-      if (id === user.id) return false;
-      return canShowRouteForLocation(locations.find((l) => l.userId === id));
-    });
-    setHighlightUserId(myOk ? user.id : (firstOther ?? null));
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on meeting switch
-  }, [activeMeetingId, user?.id]);
-
-  // Synchronizuj načítané trasy podľa prepínača a fokusu.
-  useEffect(() => {
-    if (!activeMeeting) {
+    if (!activeMeeting || !user) {
       setRouteUserIds([]);
       return;
     }
-    if (showAllRoutes) {
-      setRouteUserIds((prev) => (sameIdSet(prev, eligibleRouteUserIds) ? prev : eligibleRouteUserIds));
-      return;
+    const next: string[] = [];
+    if (canShowMyRoute) next.push(user.id);
+    if (
+      peekRouteOn &&
+      peekFresh &&
+      peekFresh.userId !== user.id &&
+      meetingTargetIds.has(peekFresh.userId) &&
+      canShowRouteForLocation(peekFresh)
+    ) {
+      next.push(peekFresh.userId);
     }
-    const focus =
-      highlightUserId && eligibleRouteUserIds.includes(highlightUserId)
-        ? highlightUserId
-        : user?.id && eligibleRouteUserIds.includes(user.id)
-          ? user.id
-          : (eligibleRouteUserIds[0] ?? null);
-    const next = focus ? [focus] : [];
     setRouteUserIds((prev) => (sameIdSet(prev, next) ? prev : next));
-    if (focus && focus !== highlightUserId) setHighlightUserId(focus);
   }, [
     activeMeeting,
-    showAllRoutes,
-    highlightUserId,
-    eligibleRouteUserIds,
-    user?.id,
+    user,
+    canShowMyRoute,
+    peekRouteOn,
+    peekFresh,
+    meetingTargetIds,
   ]);
 
-  // Ak zraz medzitým zmizol zo zoznamu, zruš zobrazené trasy.
   useEffect(() => {
-    if (!activeMeetingId) return;
+    if (!activeMeetingId) {
+      setPeekRouteOn(false);
+      return;
+    }
     if (!meetingPoints.some((m) => m.id === activeMeetingId)) {
       setRouteUserIds([]);
-      setHighlightUserId(null);
+      setPeekRouteOn(false);
     }
   }, [meetingPoints, activeMeetingId]);
+
+  // Obnov peek podľa čerstvých polôh
+  useEffect(() => {
+    setPeek((prev) => {
+      if (!prev) return null;
+      const fresh = locations.find((l) => l.userId === prev.userId);
+      if (!fresh) return null;
+      if (
+        fresh.updatedAt === prev.updatedAt &&
+        fresh.latitude === prev.latitude &&
+        fresh.longitude === prev.longitude &&
+        fresh.status === prev.status &&
+        fresh.heading === prev.heading
+      ) {
+        return prev;
+      }
+      return fresh;
+    });
+  }, [locations]);
+
+  useEffect(() => {
+    if (!peek) {
+      setPeekRouteOn(false);
+      setPeekRoutePromptDismissed(false);
+    }
+  }, [peek]);
 
   useEffect(() => {
     if (!meetingDetail) return;
@@ -317,13 +296,16 @@ export function MapView({ isActive }: { isActive: boolean }) {
 
   const mapClusters = useMemo(() => clusterLocations(filtered), [filtered]);
 
-  const focusUserOnMap = useCallback((userId: string, openDetail: boolean) => {
-    const loc = locationsRef.current.find((l) => l.userId === userId);
-    if (!loc || !mapRef.current) return false;
-    centerMap(mapRef.current, { lat: loc.latitude, lng: loc.longitude });
-    if (openDetail) setDetail(loc);
-    return true;
-  }, []);
+  const focusUserOnMap = useCallback(
+    (userId: string, openPeekPanel: boolean) => {
+      const loc = locationsRef.current.find((l) => l.userId === userId);
+      if (!loc || !mapRef.current) return false;
+      centerMap(mapRef.current, { lat: loc.latitude, lng: loc.longitude });
+      if (openPeekPanel) openPeek(loc);
+      return true;
+    },
+    [openPeek],
+  );
 
   useEffect(() => {
     if (!focusTarget) return;
@@ -349,7 +331,8 @@ export function MapView({ isActive }: { isActive: boolean }) {
     setPickPurpose("create");
     setPickedPos(null);
     setCreateSheetPos(null);
-    setDetail(null);
+    setPeek(null);
+    setPeekRouteOn(false);
     setClusterPick(null);
     setShowActions(false);
     setMeetingDetail(null);
@@ -360,7 +343,8 @@ export function MapView({ isActive }: { isActive: boolean }) {
     setPickPurpose("move");
     setPickedPos(null);
     setCreateSheetPos(null);
-    setDetail(null);
+    setPeek(null);
+    setPeekRouteOn(false);
     setClusterPick(null);
     setShowActions(false);
     setMeetingDetail(null);
@@ -422,10 +406,10 @@ export function MapView({ isActive }: { isActive: boolean }) {
     }
   };
 
-  const centerOnDetail = () => {
-    if (!detail || !mapRef.current || detailCenterBusy) return;
-    const target = detail;
-    setDetailCenterBusy(true);
+  const centerOnPeek = () => {
+    if (!peekFresh || !mapRef.current || peekCenterBusy) return;
+    const target = peekFresh;
+    setPeekCenterBusy(true);
     setCentering({ targetId: target.userId, label: target.user.name });
     pulse(target.userId);
     centerMap(
@@ -434,11 +418,25 @@ export function MapView({ isActive }: { isActive: boolean }) {
       16,
       () => {
         setCentering(null);
-        setDetailCenterBusy(false);
+        setPeekCenterBusy(false);
       },
     );
-    setDetail(null);
   };
+
+  const closePeek = () => {
+    setPeek(null);
+    setPeekRouteOn(false);
+    setPeekRoutePromptDismissed(false);
+  };
+
+  const showPeekRoutePrompt = Boolean(
+    peekFresh &&
+      peekCanRoute &&
+      peekFresh.userId !== user?.id &&
+      !peekRouteOn &&
+      !peekRoutePromptDismissed &&
+      !pickMode,
+  );
 
   if (!MAPS_KEY) {
     return (
@@ -453,7 +451,7 @@ export function MapView({ isActive }: { isActive: boolean }) {
 
   return (
     <div className={`map-wrap page page--flush${pickMode ? " map-wrap--pick" : ""}`}>
-      <div className={`map-overlay-top${activeMeeting && !pickMode ? " map-overlay-top--with-routes" : ""}`}>
+      <div className="map-overlay-top">
         {!pickMode && (
           <>
             <button className={`chip${filter === "ALL" ? " is-active" : ""}`} onClick={() => setFilter("ALL")}>
@@ -544,20 +542,14 @@ export function MapView({ isActive }: { isActive: boolean }) {
             if (cluster.members.length === 1) {
               const l = cluster.members[0];
               const isMe = Boolean(user && l.userId === user.id);
-              const isFocus = Boolean(highlightUserId && l.userId === highlightUserId);
               const tapped = isPulsing(l.userId) || centering?.targetId === l.userId;
-              const routeVisible = Boolean(activeMeeting && routeUserIds.includes(l.userId));
               return (
                 <MarkerF
                   key={l.id}
                   position={{ lat: l.latitude, lng: l.longitude }}
                   onClick={() => {
                     if (pickMode) return;
-                    pulse(l.userId);
-                    if (activeMeeting && meetingTargetIds.has(l.userId) && selectRouteFocus(l.userId)) {
-                      return;
-                    }
-                    setDetail(l);
+                    openPeek(l);
                   }}
                   icon={{
                     path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
@@ -567,13 +559,9 @@ export function MapView({ isActive }: { isActive: boolean }) {
                         ? "#16a34a"
                         : "#f59e0b",
                     fillOpacity: 1,
-                    strokeWeight: isMe || isFocus ? 3.5 : routeVisible ? 3 : tapped ? 2.5 : 1.5,
-                    strokeColor: isMe
-                      ? "#eff6ff"
-                      : isFocus || routeVisible || tapped
-                        ? "#6d28d9"
-                        : "#ffffff",
-                    scale: isMe ? 9 : isFocus ? 8 : routeVisible ? 7 : tapped ? 8 : 5.5,
+                    strokeWeight: isMe ? 3.5 : tapped ? 2.5 : 1.5,
+                    strokeColor: isMe ? "#eff6ff" : tapped ? "#93c5fd" : "#ffffff",
+                    scale: isMe ? 9 : tapped ? 7 : 5.5,
                     rotation: l.heading ?? 0,
                   }}
                   label={
@@ -586,14 +574,8 @@ export function MapView({ isActive }: { isActive: boolean }) {
                         }
                       : undefined
                   }
-                  title={
-                    isMe
-                      ? `${l.user.name} (ty)`
-                      : activeMeeting && meetingTargetIds.has(l.userId)
-                        ? `${l.user.name} – klepni pre trasu`
-                        : l.user.name
-                  }
-                  zIndex={isMe ? 2500 : isFocus ? 2000 : tapped ? 1000 : 1}
+                  title={isMe ? `${l.user.name} (ty)` : l.user.name}
+                  zIndex={isMe ? 2500 : tapped ? 1000 : 1}
                 />
               );
             }
@@ -616,7 +598,7 @@ export function MapView({ isActive }: { isActive: boolean }) {
                   fillColor: hasMe ? "#1d4ed8" : hasOnline ? "#16a34a" : "#f59e0b",
                   fillOpacity: 1,
                   strokeWeight: hasMe || tapped ? 3.5 : 2,
-                  strokeColor: hasMe ? "#eff6ff" : tapped ? "#6d28d9" : "#ffffff",
+                  strokeColor: hasMe ? "#eff6ff" : tapped ? "#93c5fd" : "#ffffff",
                   scale: Math.min(22, (hasMe ? 13 : 11) + count * 1.5),
                 }}
                 label={{
@@ -681,22 +663,51 @@ export function MapView({ isActive }: { isActive: boolean }) {
             .filter((line) => line.path.length >= 2 && !line.error)
             .map((line) => {
               const isSelf = line.userId === user?.id;
-              const isFocus = line.userId === highlightUserId;
-              const prominent = isFocus || (!highlightUserId && isSelf);
               return (
                 <PolylineF
                   key={line.userId}
                   path={line.path}
                   options={{
-                    strokeColor: isSelf ? "#1d4ed8" : prominent ? "#7c3aed" : "#94a3b8",
-                    strokeOpacity: line.loading ? 0.25 : prominent ? 0.92 : 0.32,
-                    strokeWeight: prominent ? (isSelf ? 5.5 : 5) : 2.5,
+                    strokeColor: isSelf ? "#1d4ed8" : "#64748b",
+                    strokeOpacity: line.loading ? 0.2 : isSelf ? 0.92 : 0.38,
+                    strokeWeight: isSelf ? 5.5 : 2.5,
                     geodesic: false,
-                    zIndex: prominent ? 4 : 1,
+                    zIndex: isSelf ? 4 : 1,
                   }}
                 />
               );
             })}
+          {showPeekRoutePrompt && peekFresh && (
+            <OverlayViewF
+              position={{ lat: peekFresh.latitude, lng: peekFresh.longitude }}
+              mapPaneName={OverlayView.OVERLAY_MOUSE_TARGET}
+              getPixelPositionOffset={(width, height) => ({
+                x: -(width / 2),
+                y: -(height + 28),
+              })}
+            >
+              <div className="map-route-prompt">
+                <button
+                  type="button"
+                  className="map-route-prompt__action"
+                  onClick={() => {
+                    setPeekRouteOn(true);
+                    setPeekRoutePromptDismissed(false);
+                  }}
+                >
+                  Zobraziť trasu
+                </button>
+                <button
+                  type="button"
+                  className="map-route-prompt__dismiss"
+                  aria-label="Skryť ponuku"
+                  onClick={() => setPeekRoutePromptDismissed(true)}
+                >
+                  <CloseIcon size={14} />
+                </button>
+              </div>
+            </OverlayViewF>
+          )}
           {pickedPos && (
             <MarkerF
               position={pickedPos}
@@ -716,52 +727,29 @@ export function MapView({ isActive }: { isActive: boolean }) {
       )}
 
       {activeMeeting && !pickMode && (
-        <div className="map-controls-top-right">
-          <button
-            type="button"
-            className={`chip chip--route-all${showAllRoutes ? " is-active" : ""}`}
-            onClick={toggleShowAllRoutes}
-            title={
-              showAllRoutes
-                ? "Všetky trasy jemne + jedna výrazne"
-                : "Len výrazná trasa vybraného člena"
-            }
-          >
-            {showAllRoutes ? "Všetky trasy" : "1 trasa"}
-          </button>
-        </div>
-      )}
-
-      {activeMeeting && !pickMode && (
         <div className="map-overlay-bottom-left">
           <div className="map-route-nav">
             <div className="map-route-nav__head">
               <div className="map-route-nav__info">
                 <span className="map-route-nav__title">
                   {activeMeeting.title}
-                  {highlightIsMe
-                    ? " · tvoja trasa"
-                    : primaryRoute?.who
-                      ? ` · ${primaryRoute.who}`
-                      : showAllRoutes
-                        ? ` · ${routeUserIds.length} trás`
-                        : " · navigácia k zrazu"}
+                  {canShowMyRoute ? " · tvoja trasa" : " · navigácia k zrazu"}
                 </span>
-                {routeUserIds.length > 0 && (
+                {myRouteOn && (
                   <span className="map-route-nav__meta" role="status" aria-live="polite">
-                    {primaryLoading ? (
+                    {myRouteLoading ? (
                       <>
                         <span className="spinner spinner--sm" aria-hidden />
                         počítam trasu…
                       </>
-                    ) : primaryEta && primaryDistance ? (
+                    ) : myEta && myDistance ? (
                       <>
-                        <span className="map-route-nav__eta">{primaryEta}</span>
+                        <span className="map-route-nav__eta">{myEta}</span>
                         <span className="map-route-nav__sep">·</span>
-                        <span className="map-route-nav__dist">{primaryDistance}</span>
+                        <span className="map-route-nav__dist">{myDistance}</span>
                       </>
-                    ) : primaryEta ? (
-                      <span className="map-route-nav__eta">{primaryEta}</span>
+                    ) : myEta ? (
+                      <span className="map-route-nav__eta">{myEta}</span>
                     ) : (
                       <span className="map-route-nav__eta map-route-nav__eta--muted">—</span>
                     )}
@@ -773,27 +761,6 @@ export function MapView({ isActive }: { isActive: boolean }) {
               </button>
             </div>
             <div className="map-route-nav__actions">
-              {canFocusMyRoute && (
-                <button
-                  type="button"
-                  className={`chip chip--route-toggle${highlightIsMe ? " is-active" : ""}`}
-                  onClick={() => user && selectRouteFocus(user.id)}
-                >
-                  Moja trasa
-                </button>
-              )}
-              {highlightUserId && highlightUserId !== user?.id && (
-                <button
-                  type="button"
-                  className="btn btn--sm btn--ghost"
-                  onClick={() => {
-                    const loc = locations.find((l) => l.userId === highlightUserId);
-                    if (loc) setDetail(loc);
-                  }}
-                >
-                  Detail
-                </button>
-              )}
               <button
                 className="btn btn--sm btn--ghost"
                 onClick={() => setMeetingDetail(activeMeeting)}
@@ -801,12 +768,7 @@ export function MapView({ isActive }: { isActive: boolean }) {
                 Zoznam
               </button>
             </div>
-            <p className="map-route-nav__hint">
-              {showAllRoutes
-                ? "Jemné trasy všetkých · klepni na člena pre výraznú trasu."
-                : "Zapni „Všetky trasy“ vpravo hore, alebo klepni na člena."}
-            </p>
-            {!canFocusMyRoute &&
+            {!canShowMyRoute &&
               user &&
               meetingTargetIds.has(user.id) &&
               !canShowRouteForLocation(myLoc) && (
@@ -814,30 +776,127 @@ export function MapView({ isActive }: { isActive: boolean }) {
                   {noRouteLocationHint(true)}
                 </p>
               )}
-            {canFocusMyRoute && myLoc && !isLocationLive(myLoc) && highlightIsMe && (
+            {canShowMyRoute && myLoc && !isLocationLive(myLoc) && (
               <p className="map-route-nav__hint map-route-nav__hint--warn">
                 {staleLocationRouteHint(true)}
               </p>
             )}
-            {!routeError && routeUserIds.length > 0 && !primaryEta && !primaryLoading && Boolean(primaryRoute) && (
+            {!routeError && myRouteOn && !myEta && !myRouteLoading && Boolean(myRouteLine) && (
               <p className="map-route-nav__hint map-route-nav__hint--warn">
                 Nepodarilo sa vypočítať ETA trasy.
               </p>
             )}
-            {!routeError && showAllRoutes && otherRouteSummaries.length > 0 && (
-              <div className="map-route-nav__others">
-                {otherRouteSummaries.map((item) => (
-                  <button
-                    type="button"
-                    key={item.userId}
-                    className="map-route-nav__other"
-                    onClick={() => selectRouteFocus(item.userId)}
-                  >
-                    {item.name}: {item.summary}
-                  </button>
-                ))}
+          </div>
+        </div>
+      )}
+
+      {peekFresh && !pickMode && (
+        <div className="map-overlay-bottom-right">
+          <div className="map-peek">
+            <div className="map-peek__head">
+              <div className="map-peek__who">
+                <Avatar name={peekFresh.user.name} />
+                <div className="grow" style={{ minWidth: 0 }}>
+                  <div className="map-peek__name">
+                    {peekFresh.userId === user?.id
+                      ? `${peekFresh.user.name} (ty)`
+                      : peekFresh.user.name}
+                    {peekFresh.userId === user?.id && (
+                      <span className="badge badge--me">Ja</span>
+                    )}
+                  </div>
+                  <div className="map-peek__sub">
+                    <StatusDot status={peekFresh.status} />
+                    {peekFresh.status === "online" ? "Online" : "Posledná poloha"}
+                    <span>· {fromNow(peekFresh.updatedAt)}</span>
+                  </div>
+                  <RoleBadge role={peekFresh.user.role} />
+                </div>
+              </div>
+              <button className="btn btn--icon" onClick={closePeek} aria-label="Zavrieť">
+                <CloseIcon size={16} />
+              </button>
+            </div>
+
+            {peekFresh.userId !== user?.id && activeMeeting && meetingTargetIds.has(peekFresh.userId) && (
+              <div className="map-peek__route">
+                {peekCanRoute ? (
+                  <>
+                    {peekRouteOn ? (
+                      <div className="map-peek__route-meta" role="status" aria-live="polite">
+                        {peekRouteLoading ? (
+                          <>
+                            <span className="spinner spinner--sm" aria-hidden />
+                            počítam jemnú trasu…
+                          </>
+                        ) : peekEta && peekDistance ? (
+                          <>
+                            <span className="map-peek__eta">{peekEta}</span>
+                            <span className="map-peek__sep">·</span>
+                            <span>{peekDistance}</span>
+                          </>
+                        ) : peekEta ? (
+                          <span className="map-peek__eta">{peekEta}</span>
+                        ) : (
+                          <span className="muted">Trasa na mape</span>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="map-peek__hint">Trasa je skrytá.</p>
+                    )}
+                    {!isLocationLive(peekFresh) && peekRouteOn && (
+                      <p className="map-peek__hint map-peek__hint--warn">
+                        {staleLocationRouteHint(false)}
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      className={`btn btn--sm${peekRouteOn ? "" : " btn--primary"}`}
+                      onClick={() => {
+                        if (peekRouteOn) {
+                          setPeekRouteOn(false);
+                          setPeekRoutePromptDismissed(false);
+                        } else {
+                          setPeekRouteOn(true);
+                          setPeekRoutePromptDismissed(false);
+                        }
+                      }}
+                    >
+                      {peekRouteOn ? "Skryť trasu" : "Zobraziť trasu"}
+                    </button>
+                  </>
+                ) : (
+                  <p className="map-peek__hint map-peek__hint--warn">
+                    {noRouteLocationHint(false)}
+                  </p>
+                )}
               </div>
             )}
+
+            <div className="map-peek__actions">
+              <button
+                className="btn grow"
+                onClick={centerOnPeek}
+                disabled={peekCenterBusy}
+              >
+                {peekCenterBusy ? "Centrujem…" : "Vycentrovať"}
+              </button>
+              {peekFresh.userId !== user?.id && (
+                <button
+                  className="btn btn--primary grow"
+                  onClick={() => {
+                    openPing({
+                      scope: "USER",
+                      targetIds: [peekFresh.userId],
+                      label: peekFresh.user.name,
+                    });
+                    closePeek();
+                  }}
+                >
+                  Pingnúť
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -928,22 +987,22 @@ export function MapView({ isActive }: { isActive: boolean }) {
       {meetingDetail && (
         <MeetingPointSheet
           meeting={meetingDetail}
-          routeVisible={meetingDetail.id === activeMeeting?.id && Boolean(highlightUserId)}
+          routeVisible={meetingDetail.id === activeMeeting?.id && myRouteOn}
           routeSummary={
             meetingDetail.id === activeMeeting?.id
-              ? primaryLoading
+              ? myRouteLoading
                 ? "počítam trasu…"
-                : primaryEta && primaryDistance
-                  ? `${primaryEta} · ${primaryDistance}`
-                  : primaryEta
+                : myEta && myDistance
+                  ? `${myEta} · ${myDistance}`
+                  : myEta
               : null
           }
           onClose={() => setMeetingDetail(null)}
           onToggleRoute={() => {
             if (meetingDetail.id !== activeMeetingId) {
               focusMeeting(meetingDetail.id);
-            } else if (user && meetingTargetIds.has(user.id)) {
-              selectRouteFocus(user.id);
+            } else {
+              clearActiveMeeting();
             }
             setMeetingDetail(null);
           }}
@@ -965,88 +1024,9 @@ export function MapView({ isActive }: { isActive: boolean }) {
           onClose={() => setClusterPick(null)}
           onSelect={(loc) => {
             setClusterPick(null);
-            if (activeMeeting && meetingTargetIds.has(loc.userId) && selectRouteFocus(loc.userId)) {
-              return;
-            }
-            setDetail(loc);
+            openPeek(loc);
           }}
         />
-      )}
-
-      {detail && (
-        <Sheet
-          title={
-            detail.userId === user?.id ? `${detail.user.name} (ty)` : detail.user.name
-          }
-          onClose={() => setDetail(null)}
-        >
-          <div className="stack sheet-member-pop">
-            <div className="row">
-              <Avatar name={detail.user.name} />
-              <div className="grow">
-                <div className="list-row__title">
-                  <StatusDot status={detail.status} />
-                  {detail.status === "online" ? "Online" : "Posledná poloha"}
-                  {detail.userId === user?.id && <span className="badge badge--me">Ja</span>}
-                  <RoleBadge role={detail.user.role} />
-                </div>
-                <div className="list-row__sub">Aktualizované {fromNow(detail.updatedAt)}</div>
-              </div>
-            </div>
-            {activeMeeting && meetingTargetIds.has(detail.userId) ? (
-              (() => {
-                const canRoute = canShowRouteForLocation(detail);
-                const isFocus = highlightUserId === detail.userId;
-                const live = isLocationLive(detail);
-                return (
-                  <>
-                    {canRoute ? (
-                      <>
-                        <p className="hint">
-                          {isFocus
-                            ? "Táto trasa je zvýraznená na mape."
-                            : "Klepni nižšie pre zvýraznenie trasy tohto člena na mape."}
-                        </p>
-                        {!live && (
-                          <p className="hint" style={{ color: "var(--warn)" }}>
-                            {staleLocationRouteHint(detail.userId === user?.id)}
-                          </p>
-                        )}
-                        <button
-                          className={`btn btn--block${isFocus ? "" : " btn--primary"}`}
-                          onClick={() => {
-                            selectRouteFocus(detail.userId);
-                            setDetail(null);
-                          }}
-                        >
-                          {isFocus ? "Trasa je zvýraznená" : "Zvýrazniť trasu k zrazu"}
-                        </button>
-                      </>
-                    ) : (
-                      <p className="hint" style={{ color: "var(--warn)" }}>
-                        {noRouteLocationHint(detail.userId === user?.id)}
-                      </p>
-                    )}
-                  </>
-                );
-              })()
-            ) : null}
-            <div className="row">
-              <button className="btn grow" onClick={centerOnDetail} disabled={detailCenterBusy}>
-                {detailCenterBusy ? "Centrujem…" : "Vycentrovať"}
-              </button>
-              <button
-                className="btn btn--primary grow"
-                onClick={() => {
-                  openPing({ scope: "USER", targetIds: [detail.userId], label: detail.user.name });
-                  setDetail(null);
-                }}
-              >
-                Pingnúť
-              </button>
-            </div>
-          </div>
-        </Sheet>
       )}
     </div>
   );
