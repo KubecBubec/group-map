@@ -1,4 +1,5 @@
 import { apiFetch } from "./api";
+import { APP_ICON, APP_ICON_SMALL } from "./appBrand";
 
 function urlBase64ToUint8Array(base64: string): Uint8Array {
   const padding = "=".repeat((4 - (base64.length % 4)) % 4);
@@ -73,14 +74,14 @@ export function showLocalNotification(title: string, body: string): void {
       void navigator.serviceWorker.ready.then((reg) =>
         reg.showNotification(title, {
           body,
-          icon: "/favicon.svg",
-          badge: "/favicon.svg",
+          icon: APP_ICON,
+          badge: APP_ICON_SMALL,
           tag: "ping-local",
         }),
       );
       return;
     }
-    new Notification(title, { body, icon: "/favicon.svg" });
+    new Notification(title, { body, icon: APP_ICON });
   } catch {
     /* iOS môže blokovať mimo service workera */
   }

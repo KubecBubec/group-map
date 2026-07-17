@@ -7,6 +7,7 @@ import {
   setToken,
 } from "../lib/api";
 import { isPrivateHostname } from "../lib/network";
+import { APP_ICON_SMALL, APP_NAME, APP_TAGLINE } from "../lib/appBrand";
 import { GoogleG } from "./icons";
 
 function parseAuthError(e: unknown): string {
@@ -69,11 +70,13 @@ export function Login({
   return (
     <div className="auth">
       <div className="auth__card auth__card--wide">
-        <div className="auth__logo">🧭</div>
+        <div className="auth__logo">
+          <img src={APP_ICON_SMALL} alt="" width={56} height={56} />
+        </div>
         <div>
-          <h1 style={{ fontSize: 23 }}>Koordinátor skupiny</h1>
+          <h1 style={{ fontSize: 23 }}>{APP_NAME}</h1>
           <p className="hint" style={{ marginTop: 8 }}>
-            Živá mapa, stretnutia a rýchla koordinácia celej skupiny na jednom mieste.
+            {APP_TAGLINE}
           </p>
         </div>
 

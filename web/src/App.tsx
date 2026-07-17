@@ -9,6 +9,7 @@ import { GroupsView } from "./views/GroupsView";
 import { MeetingsView } from "./views/MeetingsView";
 import { MoreView } from "./views/MoreView";
 import { BellIcon, LayersIcon, MapIcon, MoreIcon, PinIcon, UsersIcon } from "./components/icons";
+import { APP_ICON_SMALL, APP_NAME } from "./lib/appBrand";
 
 type Tab = "map" | "members" | "groups" | "meetings" | "more";
 
@@ -53,7 +54,8 @@ function Shell() {
     <div className="shell">
       <nav className="nav">
         <div className="nav__brand">
-          <span style={{ fontSize: 22 }}>🧭</span> Koordinátor
+          <img src={APP_ICON_SMALL} alt="" width={28} height={28} className="topbar__logo" />
+          {APP_NAME}
         </div>
         {TABS.map((t) => (
           <button

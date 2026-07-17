@@ -1,17 +1,35 @@
 {
-  "name": "Koordinátor skupiny",
-  "short_name": "Koordinátor",
-  "description": "Živá mapa a koordinácia skupiny",
+  "name": "Živá mapa",
+  "short_name": "Živá mapa",
+  "description": "Mapa skupiny, body stretnutia a pingy v reálnom čase",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f4f5fb",
   "theme_color": "#6d28d9",
   "icons": [
     {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
       "src": "/favicon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "any"
     }
   ]
 }

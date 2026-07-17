@@ -1,5 +1,5 @@
 self.addEventListener("push", (event) => {
-  let data = { title: "Koordinátor", body: "", url: "/" };
+  let data = { title: "Živá mapa", body: "", url: "/" };
   try {
     data = { ...data, ...JSON.parse(event.data?.text() ?? "{}") };
   } catch {
@@ -8,8 +8,8 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     self.registration.showNotification(data.title, {
       body: data.body,
-      icon: "/favicon.svg",
-      badge: "/favicon.svg",
+      icon: "/icon-512.png",
+      badge: "/icon-192.png",
       tag: data.tag || "ping",
       data: { url: data.url || "/" },
     }),
