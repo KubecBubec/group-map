@@ -226,18 +226,6 @@ function shouldRefreshRoute(
   return false;
 }
 
-function emptyLine(userId: string): MeetingRouteLine {
-  return {
-    userId,
-    path: [],
-    durationSeconds: null,
-    distanceMeters: null,
-    loading: true,
-    refreshing: false,
-    error: null,
-  };
-}
-
 function upsertLine(lines: MeetingRouteLine[], next: MeetingRouteLine): MeetingRouteLine[] {
   const idx = lines.findIndex((l) => l.userId === next.userId);
   if (idx === -1) return [...lines, next];
@@ -299,7 +287,6 @@ export function useMeetingRoutePaths(
       const origin = { lat: loc.latitude, lng: loc.longitude };
       const dest = { lat: meeting.latitude, lng: meeting.longitude };
       const dKey = destKey(dest);
-      const isSelf = userId === currentUserIdRef.current;
       const gen = (fetchGenRef.current.get(userId) ?? 0) + 1;
       fetchGenRef.current.set(userId, gen);
 
