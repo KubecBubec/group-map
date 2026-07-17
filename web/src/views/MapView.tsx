@@ -131,6 +131,7 @@ export function MapView({ isActive }: { isActive: boolean }) {
     locations,
     users,
     groups,
+    user?.id,
   );
 
   const meetingTargetIds = useMemo(() => {
@@ -183,10 +184,12 @@ export function MapView({ isActive }: { isActive: boolean }) {
 
   const myEta = myRouteLine ? formatRouteEta(myRouteLine) : null;
   const myDistance = myRouteLine ? formatRouteDistanceLabel(myRouteLine) : null;
-  const myRouteLoading = myRouteLine?.loading ?? false;
+  const myRouteLoading = Boolean(myRouteLine?.loading && (myRouteLine.path.length ?? 0) < 2);
+  const myRouteRefreshing = Boolean(myRouteLine?.refreshing);
   const peekEta = peekRouteLine ? formatRouteEta(peekRouteLine) : null;
   const peekDistance = peekRouteLine ? formatRouteDistanceLabel(peekRouteLine) : null;
-  const peekRouteLoading = peekRouteLine?.loading ?? false;
+  const peekRouteLoading = Boolean(peekRouteLine?.loading && (peekRouteLine.path.length ?? 0) < 2);
+  const peekRouteRefreshing = Boolean(peekRouteLine?.refreshing);
 
   const closePeek = useCallback(() => {
     setPeek(null);
@@ -701,7 +704,7 @@ export function MapView({ isActive }: { isActive: boolean }) {
                   path={line.path}
                   options={{
                     strokeColor: isSelf ? "#1d4ed8" : "#64748b",
-                    strokeOpacity: line.loading ? 0.2 : isSelf ? 0.92 : 0.38,
+                    strokeOpacity: isSelf ? 0.92 : 0.38,
                     strokeWeight: isSelf ? 5.5 : 2.5,
                     geodesic: false,
                     zIndex: isSelf ? 4 : 1,
@@ -775,9 +778,17 @@ export function MapView({ isActive }: { isActive: boolean }) {
                         <span className="map-route-nav__eta">{myEta}</span>
                         <span className="map-route-nav__sep">·</span>
                         <span className="map-route-nav__dist">{myDistance}</span>
+                        {myRouteRefreshing && (
+                          <span className="map-route-nav__refresh-hint"> · aktualizujem</span>
+                        )}
                       </>
                     ) : myEta ? (
-                      <span className="map-route-nav__eta">{myEta}</span>
+                      <span className="map-route-nav__eta">
+                        {myEta}
+                        {myRouteRefreshing && (
+                          <span className="map-route-nav__refresh-hint"> · aktualizujem</span>
+                        )}
+                      </span>
                     ) : (
                       <span className="map-route-nav__eta map-route-nav__eta--muted">—</span>
                     )}
@@ -882,9 +893,17 @@ export function MapView({ isActive }: { isActive: boolean }) {
                             <span className="map-route-nav__sep">·</span>
                             <span>{peekDistance}</span>
                             <span className="map-route-nav__peer-label">jemná trasa</span>
+                            {peekRouteRefreshing && (
+                              <span className="map-route-nav__refresh-hint"> · aktualizujem</span>
+                            )}
                           </>
                         ) : peekEta ? (
-                          <span className="map-route-nav__peer-eta">{peekEta}</span>
+                          <span className="map-route-nav__peer-eta">
+                            {peekEta}
+                            {peekRouteRefreshing && (
+                              <span className="map-route-nav__refresh-hint"> · aktualizujem</span>
+                            )}
+                          </span>
                         ) : (
                           <span className="map-route-nav__eta map-route-nav__eta--muted">—</span>
                         )}
