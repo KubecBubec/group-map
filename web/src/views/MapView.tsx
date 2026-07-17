@@ -5,7 +5,7 @@ import { useCoordinator } from "../lib/coordinator";
 import { centerMap } from "../lib/mapCenter";
 import { formatRouteDistanceLabel, formatRouteEta, useMeetingRoutePaths } from "../lib/meetingRoutes";
 import { resolveMeetingTargetUserIds } from "../lib/meetingTargets";
-import { canShowRouteForLocation, isLocationLive, noRouteLocationHint, staleLocationRouteHint } from "../lib/locationFreshness";
+import { canShowRouteForLocation, isLocationLive, noRouteLocationHint, staleLocationRouteHint, stalePeerLocationWakeHint } from "../lib/locationFreshness";
 import { canManageMeetingPoint } from "../lib/meetingPermissions";
 import { useTapPulse } from "../lib/tapFeedback";
 import { fromNow } from "../lib/time";
@@ -878,6 +878,14 @@ export function MapView({ isActive }: { isActive: boolean }) {
                   </div>
                 </div>
 
+                {!isLocationLive(peekFresh) && (
+                  <p className="map-route-nav__hint map-route-nav__hint--warn">
+                    {stalePeerLocationWakeHint({
+                      routeShown: Boolean(peekRouteOn && peekCanRoute),
+                    })}
+                  </p>
+                )}
+
                 {activeMeeting && meetingTargetIds.has(peekFresh.userId) && (
                   <>
                     {peekCanRoute && peekRouteOn ? (
@@ -909,11 +917,6 @@ export function MapView({ isActive }: { isActive: boolean }) {
                         )}
                       </span>
                     ) : null}
-                    {peekCanRoute && !isLocationLive(peekFresh) && peekRouteOn && (
-                      <p className="map-route-nav__hint map-route-nav__hint--warn">
-                        {staleLocationRouteHint(false)}
-                      </p>
-                    )}
                     {!peekCanRoute && (
                       <p className="map-route-nav__hint map-route-nav__hint--warn">
                         {noRouteLocationHint(false)}

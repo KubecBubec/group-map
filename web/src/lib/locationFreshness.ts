@@ -38,6 +38,16 @@ export function staleLocationRouteHint(isSelf: boolean): string {
   return "Poloha nie je živá – trasa pôjde podľa poslednej známej polohy (môže byť neaktuálna).";
 }
 
+/** Člen nemá appku aktívnu – vidíme len poslednú známu polohu. */
+export function stalePeerLocationWakeHint(options?: { routeShown?: boolean }): string {
+  const base =
+    "Vidíš poslednú známu polohu. Aktuálne GPS zdieľa len ten, kto má appku otvorenú. Pingni ho – nech si ju otvorí.";
+  if (options?.routeShown) {
+    return `${base} Trasa k zrazu ide podľa tejto polohy.`;
+  }
+  return base;
+}
+
 export function noRouteLocationHint(isSelf: boolean): string {
   if (isSelf) {
     return "Nemáme tvoju polohu (alebo je staršia ako 45 min). Zapni GPS a skús znova.";
