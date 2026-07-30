@@ -676,8 +676,6 @@ export function MapView({ isActive }: { isActive: boolean }) {
           onClick={handleMapClick}
           onMouseDown={onMapPressStart}
           onMouseUp={onMapPressEnd}
-          onTouchStart={onMapPressStart}
-          onTouchEnd={onMapPressEnd}
           onDragStart={onMapDragStart}
           options={{
             disableDefaultUI: true,
