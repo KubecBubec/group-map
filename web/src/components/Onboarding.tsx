@@ -75,6 +75,21 @@ export function Onboarding({
     }
   };
 
+  const continueAfterGranted = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      try {
+        await enableGeoTracking();
+      } catch {
+        /* poloha môže byť zamietnutá – pokračujeme, mapa ukáže banner */
+      }
+      onComplete();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (step === "permissions") {
     const status = getNotificationStatus();
     return (
@@ -120,7 +135,7 @@ export function Onboarding({
             {busy ? "Žiadam povolenia…" : "Povoliť notifikácie a polohu"}
           </button>
           {status === "granted" && (
-            <button className="btn btn--block" disabled={busy} onClick={() => void requestPermissions()}>
+            <button className="btn btn--block" disabled={busy} onClick={() => void continueAfterGranted()}>
               Pokračovať
             </button>
           )}
