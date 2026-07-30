@@ -7,6 +7,7 @@ import { formatRouteDistanceLabel, formatRouteEta, useMeetingRoutePaths } from "
 import { resolveMeetingTargetUserIds } from "../lib/meetingTargets";
 import { canShowRouteForLocation, isLocationLive, noRouteLocationHint, staleLocationRouteHint, stalePeerLocationWakeHint } from "../lib/locationFreshness";
 import { canManageMeetingPoint } from "../lib/meetingPermissions";
+import { resolveTopBarPingTarget } from "../lib/pingPermissions";
 import { useTapPulse } from "../lib/tapFeedback";
 import { fromNow } from "../lib/time";
 import type { LatLng, LocationRow, MeetingPoint } from "../lib/types";
@@ -15,13 +16,16 @@ import { LocationClusterSheet } from "../components/LocationClusterSheet";
 import { MeetingPointSheet } from "../components/MeetingPointSheet";
 import { clusterLocations } from "../lib/locationClusters";
 import { Avatar, RoleBadge, Sheet, StatusDot } from "../components/ui";
-import { LayersIcon, MapIcon, PlusIcon, SatelliteIcon, TargetIcon } from "../components/icons";
+import { CompassIcon, PlusIcon, RotateCcwIcon, RotateCwIcon, TargetIcon } from "../components/icons";
 
 const LIBRARIES: "places"[] = ["places"];
 const DEFAULT_CENTER = { lat: 43.0707, lng: 12.6197 };
 const MAP_LAYER_STORAGE_KEY = "mapLayerMode";
+const MAP_HEADING_STORAGE_KEY = "mapHeading";
 /** Zoom pri „Vycentrovať“ – bližší ako bežné recenter (14). */
 const FOCUS_ZOOM = 18;
+const ROTATE_STEP = 30;
+const MAP_LONG_PRESS_MS = 550;
 
 type MapLayerMode = "roadmap" | "satellite" | "hybrid";
 
@@ -36,6 +40,20 @@ const MAP_LAYER_LABEL: Record<MapLayerMode, string> = {
 function readMapLayerMode(): MapLayerMode {
   const stored = localStorage.getItem(MAP_LAYER_STORAGE_KEY);
   return MAP_LAYER_CYCLE.includes(stored as MapLayerMode) ? (stored as MapLayerMode) : "roadmap";
+}
+
+function normalizeHeading(value: number): number {
+  const rounded = Math.round(value);
+  const normalized = ((rounded % 360) + 360) % 360;
+  return normalized;
+}
+
+function readMapHeading(): number {
+  const raw = localStorage.getItem(MAP_HEADING_STORAGE_KEY);
+  if (!raw) return 0;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return 0;
+  return normalizeHeading(parsed);
 }
 
 function sameIdSet(a: string[], b: string[]): boolean {
@@ -105,6 +123,12 @@ export function MapView({ isActive }: { isActive: boolean }) {
   const [clusterPick, setClusterPick] = useState<LocationRow[] | null>(null);
   const [routeUserIds, setRouteUserIds] = useState<string[]>([]);
   const [mapLayer, setMapLayer] = useState<MapLayerMode>(() => readMapLayerMode());
+  const [mapHeading, setMapHeading] = useState<number>(() => readMapHeading());
+  const [mapPointActionPos, setMapPointActionPos] = useState<LatLng | null>(null);
+  const [mapPointActionMsg, setMapPointActionMsg] = useState<string | null>(null);
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressMovedRef = useRef(false);
+  const longPressPosRef = useRef<LatLng | null>(null);
   const { pulse, isPulsing } = useTapPulse();
 
   const myGroupUserIds = useMemo(() => {
@@ -138,6 +162,11 @@ export function MapView({ isActive }: { isActive: boolean }) {
     if (!activeMeeting) return new Set<string>();
     return new Set(resolveMeetingTargetUserIds(activeMeeting, users, groups));
   }, [activeMeeting, users, groups]);
+
+  const quickPingTarget = useMemo(
+    () => resolveTopBarPingTarget(user, groups, selectedUserIds),
+    [user, groups, selectedUserIds],
+  );
 
   const myLoc = useMemo(
     () => (user ? locations.find((l) => l.userId === user.id) : undefined),
@@ -235,6 +264,86 @@ export function MapView({ isActive }: { isActive: boolean }) {
       localStorage.setItem(MAP_LAYER_STORAGE_KEY, next);
       return next;
     });
+  }, []);
+
+  const updateHeading = useCallback((next: number) => {
+    const normalized = normalizeHeading(next);
+    setMapHeading(normalized);
+    localStorage.setItem(MAP_HEADING_STORAGE_KEY, String(normalized));
+  }, []);
+
+  const rotateMap = useCallback(
+    (delta: number) => {
+      updateHeading(mapHeading + delta);
+    },
+    [mapHeading, updateHeading],
+  );
+
+  const resetMapHeading = useCallback(() => {
+    updateHeading(0);
+  }, [updateHeading]);
+
+  useEffect(() => {
+    if (!mapRef.current) return;
+    mapRef.current.setHeading(mapHeading);
+  }, [mapHeading]);
+
+  const clearLongPressTimer = useCallback(() => {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => clearLongPressTimer, [clearLongPressTimer]);
+
+  const onMapPressStart = useCallback(
+    (e: google.maps.MapMouseEvent) => {
+      if (pickMode || !e.latLng) return;
+      clearLongPressTimer();
+      longPressMovedRef.current = false;
+      longPressPosRef.current = { lat: e.latLng.lat(), lng: e.latLng.lng() };
+      longPressTimerRef.current = window.setTimeout(() => {
+        if (longPressMovedRef.current || !longPressPosRef.current) return;
+        setMapPointActionPos(longPressPosRef.current);
+        setMapPointActionMsg(null);
+      }, MAP_LONG_PRESS_MS);
+    },
+    [clearLongPressTimer, pickMode],
+  );
+
+  const onMapPressEnd = useCallback(() => {
+    clearLongPressTimer();
+    longPressPosRef.current = null;
+  }, [clearLongPressTimer]);
+
+  const onMapDragStart = useCallback(() => {
+    longPressMovedRef.current = true;
+    clearLongPressTimer();
+  }, [clearLongPressTimer]);
+
+  const navigateToMapPoint = useCallback((pos: LatLng) => {
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${pos.lat},${pos.lng}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+  }, []);
+
+  const openMapPointInGoogleMaps = useCallback((pos: LatLng) => {
+    const url = `https://www.google.com/maps/search/?api=1&query=${pos.lat},${pos.lng}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+  }, []);
+
+  const copyMapPointCoords = useCallback(async (pos: LatLng) => {
+    const value = `${pos.lat.toFixed(6)}, ${pos.lng.toFixed(6)}`;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+        setMapPointActionMsg("Súradnice skopírované.");
+      } else {
+        setMapPointActionMsg("Kopírovanie nie je dostupné v tomto prehliadači.");
+      }
+    } catch {
+      setMapPointActionMsg("Nepodarilo sa skopírovať súradnice.");
+    }
   }, []);
 
   // Jedna trasa naraz: buď ja, alebo označený člen (jemná).
@@ -553,6 +662,7 @@ export function MapView({ isActive }: { isActive: boolean }) {
                 body: JSON.stringify({ sku: "maps" }),
               }).catch(() => {});
             }
+            map.setHeading(mapHeading);
             const pending = pendingFocusRef.current;
             if (pending) {
               window.setTimeout(() => {
@@ -564,10 +674,16 @@ export function MapView({ isActive }: { isActive: boolean }) {
             }
           }}
           onClick={handleMapClick}
+          onMouseDown={onMapPressStart}
+          onMouseUp={onMapPressEnd}
+          onTouchStart={onMapPressStart}
+          onTouchEnd={onMapPressEnd}
+          onDragStart={onMapDragStart}
           options={{
             disableDefaultUI: true,
             zoomControl: false,
             mapTypeId: mapLayer,
+            heading: mapHeading,
             clickableIcons: !pickMode,
             gestureHandling: "greedy",
           }}
@@ -716,6 +832,16 @@ export function MapView({ isActive }: { isActive: boolean }) {
             <MarkerF
               position={pickedPos}
               label={{ text: "📍", fontSize: "22px" }}
+              icon={{
+                path: google.maps.SymbolPath.CIRCLE,
+                scale: 0,
+              }}
+            />
+          )}
+          {mapPointActionPos && !pickMode && (
+            <MarkerF
+              position={mapPointActionPos}
+              label={{ text: "📌", fontSize: "22px" }}
               icon={{
                 path: google.maps.SymbolPath.CIRCLE,
                 scale: 0,
@@ -971,26 +1097,57 @@ export function MapView({ isActive }: { isActive: boolean }) {
         <div className="map-controls">
           <button
             type="button"
-            className={`round-btn${mapLayer !== "roadmap" ? " is-active" : ""}`}
+            className={`round-btn round-btn--tag${mapLayer !== "roadmap" ? " is-active" : ""}`}
             onClick={cycleMapLayer}
             aria-label={`Typ mapy: ${MAP_LAYER_LABEL[mapLayer]}. Klepni pre zmenu.`}
             title={MAP_LAYER_LABEL[mapLayer]}
           >
-            {mapLayer === "roadmap" ? (
-              <MapIcon />
-            ) : mapLayer === "satellite" ? (
-              <SatelliteIcon />
-            ) : (
-              <LayersIcon />
-            )}
+            <span className="round-btn__text">
+              {mapLayer === "roadmap" ? "MAPA" : mapLayer === "satellite" ? "SAT" : "HYB"}
+            </span>
           </button>
           <button
-            className={`round-btn${recenterBusy ? " is-busy" : ""}`}
+            className={`round-btn round-btn--tag${recenterBusy ? " is-busy" : ""}`}
             onClick={() => void recenter()}
             disabled={recenterBusy}
             aria-label="Na moju polohu"
+            title="Moja poloha"
           >
-            {recenterBusy ? <span className="spinner spinner--sm" aria-hidden /> : <TargetIcon />}
+            {recenterBusy ? (
+              <span className="spinner spinner--sm" aria-hidden />
+            ) : (
+              <>
+                <TargetIcon />
+                <span className="round-btn__text">MOJA</span>
+              </>
+            )}
+          </button>
+          <button
+            type="button"
+            className="round-btn"
+            onClick={() => rotateMap(-ROTATE_STEP)}
+            aria-label="Otočiť mapu doľava"
+            title="Otočiť doľava"
+          >
+            <RotateCcwIcon />
+          </button>
+          <button
+            type="button"
+            className={`round-btn${mapHeading !== 0 ? " is-active" : ""}`}
+            onClick={resetMapHeading}
+            aria-label={`Smer mapy ${mapHeading} stupňov. Nastaviť sever hore.`}
+            title={mapHeading === 0 ? "Sever hore" : `Smer ${mapHeading}°`}
+          >
+            <CompassIcon />
+          </button>
+          <button
+            type="button"
+            className="round-btn"
+            onClick={() => rotateMap(ROTATE_STEP)}
+            aria-label="Otočiť mapu doprava"
+            title="Otočiť doprava"
+          >
+            <RotateCwIcon />
           </button>
           {recenterMsg && <div className="map-recenter-hint">{recenterMsg}</div>}
         </div>
@@ -1024,15 +1181,17 @@ export function MapView({ isActive }: { isActive: boolean }) {
       {showActions && (
         <Sheet title="Rýchle akcie" onClose={() => setShowActions(false)}>
           <div className="stack">
-            <button
-              className="btn btn--primary btn--block"
-              onClick={() => {
-                openPing({ scope: "ALL", targetIds: [], label: "všetci" });
-                setShowActions(false);
-              }}
-            >
-              🔔 Pingnúť
-            </button>
+            {quickPingTarget && (
+              <button
+                className="btn btn--primary btn--block"
+                onClick={() => {
+                  openPing(quickPingTarget);
+                  setShowActions(false);
+                }}
+              >
+                🔔 Pingnúť{quickPingTarget.scope === "ALL" ? " všetkých" : `: ${quickPingTarget.label}`}
+              </button>
+            )}
             <button
               className="btn btn--block"
               onClick={() => {
@@ -1096,6 +1255,47 @@ export function MapView({ isActive }: { isActive: boolean }) {
             openPeek(loc);
           }}
         />
+      )}
+
+      {mapPointActionPos && !pickMode && (
+        <Sheet title="Bod na mape" onClose={() => setMapPointActionPos(null)}>
+          <div className="stack">
+            <p className="muted text-sm">
+              {mapPointActionPos.lat.toFixed(6)}, {mapPointActionPos.lng.toFixed(6)}
+            </p>
+            <button
+              className="btn btn--primary btn--block"
+              onClick={() => {
+                navigateToMapPoint(mapPointActionPos);
+                setMapPointActionPos(null);
+              }}
+            >
+              🧭 Navigovať sem
+            </button>
+            <button
+              className="btn btn--block"
+              onClick={() => {
+                openMapPointInGoogleMaps(mapPointActionPos);
+                setMapPointActionPos(null);
+              }}
+            >
+              🗺️ Otvoriť v Google Maps
+            </button>
+            <button className="btn btn--block" onClick={() => void copyMapPointCoords(mapPointActionPos)}>
+              📋 Skopírovať súradnice
+            </button>
+            <button
+              className="btn btn--block"
+              onClick={() => {
+                setCreateSheetPos(mapPointActionPos);
+                setMapPointActionPos(null);
+              }}
+            >
+              📍 Vytvoriť bod stretnutia tu
+            </button>
+            {mapPointActionMsg && <p className="muted text-sm">{mapPointActionMsg}</p>}
+          </div>
+        </Sheet>
       )}
     </div>
   );
