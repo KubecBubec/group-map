@@ -116,20 +116,10 @@ function Shell() {
 }
 
 function Root() {
-  const { token, ready, authError, acceptToken, enableGeoTracking } = useCoordinator();
+  const { token, ready, authError, enableGeoTracking } = useCoordinator();
   const [onboarded, setOnboarded] = useState(() => localStorage.getItem("onboarded") === "1");
 
-  if (!token) return <Login error={authError} onLogin={acceptToken} />;
-
-  if (!ready) {
-    return (
-      <div className="center-screen">
-        <div className="spinner" />
-        <p className="muted">Načítavam…</p>
-      </div>
-    );
-  }
-
+  // Najprv onboarding (inštalácia na plochu), potom prihlásenie.
   if (!onboarded) {
     return (
       <Onboarding
@@ -139,6 +129,17 @@ function Root() {
           setOnboarded(true);
         }}
       />
+    );
+  }
+
+  if (!token) return <Login error={authError} />;
+
+  if (!ready) {
+    return (
+      <div className="center-screen">
+        <div className="spinner" />
+        <p className="muted">Načítavam…</p>
+      </div>
     );
   }
 

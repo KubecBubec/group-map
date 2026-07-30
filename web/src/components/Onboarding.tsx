@@ -139,8 +139,8 @@ export function Onboarding({
         <div style={{ textAlign: "center" }}>
           <h1 style={{ fontSize: 22 }}>Pridaj si appku na plochu</h1>
           <p className="hint" style={{ marginTop: 8 }}>
-            Aplikácia funguje najlepšie ako ikona na ploche – rýchlejší prístup, celá obrazovka a
-            spoľahlivé notifikácie počas akcie.
+            Pridaj si appku na plochu, inak nebude fungovať poloha, notifikácie ani možnosť, aby od
+            teba niekto vyžiadal aktualizáciu polohy.
           </p>
         </div>
 
