@@ -10,7 +10,7 @@ import {
 } from "react";
 import { io, type Socket } from "socket.io-client";
 import { apiFetch, getSocketUrl, getToken, setToken } from "./api";
-import { enablePushNotifications, showLocalNotification } from "./notifications";
+import { enablePushNotifications, showAlertNotification, syncPushAlertsEnabled } from "./notifications";
 import {
   geoLog,
   geolocationErrorLabel,
@@ -139,6 +139,7 @@ export function CoordinatorProvider({ children }: { children: ReactNode }) {
   const [lastPing, setLastPing] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const userIdRef = useRef<string | null>(null);
+  const resyncFromServerRef = useRef<() => void>(() => {});
   const geoWatchIdRef = useRef<number | null>(null);
   const geoWatchLoggedRef = useRef(false);
   userIdRef.current = user?.id ?? null;
@@ -182,6 +183,42 @@ export function CoordinatorProvider({ children }: { children: ReactNode }) {
     setReady(true);
   }, []);
 
+  /** Po návrate z pozadia / reconnecte dobehne stav zo servera (body, skupiny, polohy…). */
+  useEffect(() => {
+    if (!token) return;
+
+    const RESYNC_THROTTLE_MS = 5000;
+    const FOREGROUND_POLL_MS = 90_000;
+    let lastResyncAt = 0;
+
+    const resyncFromServer = (force = false) => {
+      if (document.hidden) return;
+      const now = Date.now();
+      if (!force && now - lastResyncAt < RESYNC_THROTTLE_MS) return;
+      lastResyncAt = now;
+      refresh().catch(() => {});
+    };
+
+    resyncFromServerRef.current = () => resyncFromServer(false);
+
+    const onWake = () => {
+      if (!document.hidden) resyncFromServer(false);
+    };
+
+    document.addEventListener("visibilitychange", onWake);
+    window.addEventListener("pageshow", onWake);
+    window.addEventListener("focus", onWake);
+    const poll = window.setInterval(() => resyncFromServer(true), FOREGROUND_POLL_MS);
+
+    return () => {
+      resyncFromServerRef.current = () => {};
+      document.removeEventListener("visibilitychange", onWake);
+      window.removeEventListener("pageshow", onWake);
+      window.removeEventListener("focus", onWake);
+      window.clearInterval(poll);
+    };
+  }, [token, refresh]);
+
   useEffect(() => {
     if (!token) {
       setReady(true);
@@ -195,6 +232,15 @@ export function CoordinatorProvider({ children }: { children: ReactNode }) {
 
     const socket = io(getSocketUrl(), { path: "/socket.io", transports: ["websocket", "polling"] });
     socketRef.current = socket;
+    let initialConnect = true;
+
+    socket.on("connect", () => {
+      if (initialConnect) {
+        initialConnect = false;
+        return;
+      }
+      resyncFromServerRef.current();
+    });
 
     const softRefreshLocations = () => {
       apiFetch<LocationRow[]>("/locations/latest").then(setLocations).catch(() => {});
@@ -264,7 +310,7 @@ export function CoordinatorProvider({ children }: { children: ReactNode }) {
             ? "pre skupinu"
             : "pre vybraných";
       const title = event.creatorName ? `Zraz · ${event.creatorName}` : "Nový bod stretnutia";
-      showLocalNotification(title, `Nový bod stretnutia ${scopeHint}: ${event.meeting.title}`);
+      showAlertNotification(title, `Nový bod stretnutia ${scopeHint}: ${event.meeting.title}`, `meeting-${event.meeting.id}`);
     });
     socket.on("meeting-point:updated", (mp: MeetingPoint) => {
       setMeetingPoints((prev) => prev.map((x) => (x.id === mp.id ? mp : x)));
@@ -274,6 +320,7 @@ export function CoordinatorProvider({ children }: { children: ReactNode }) {
       setActiveMeetingId((prev) => (prev === id ? null : prev));
     });
     socket.on("ping:new", (ping: {
+      id?: string;
       priority: Priority;
       message: string;
       senderName?: string;
@@ -283,7 +330,7 @@ export function CoordinatorProvider({ children }: { children: ReactNode }) {
       if (!uid || !ping.recipientIds?.includes(uid)) return;
       const title = ping.senderName ? `${ping.senderName} · ${ping.priority}` : `Ping · ${ping.priority}`;
       setLastPing(`[${ping.priority}] ${ping.message}`);
-      showLocalNotification(title, ping.message);
+      showAlertNotification(title, ping.message, ping.id ? `ping-${ping.id}` : "ping");
     });
     return () => {
       socket.disconnect();
@@ -296,6 +343,7 @@ export function CoordinatorProvider({ children }: { children: ReactNode }) {
     // Nevyvolávaj dialóg automaticky – to robí onboarding. Len obnov subscribe, ak už je granted.
     if (typeof Notification !== "undefined" && Notification.permission === "granted") {
       enablePushNotifications().catch(() => {});
+      void syncPushAlertsEnabled();
     }
     logGeoEnvironment(Boolean(myPos));
   }, [token, ready]);

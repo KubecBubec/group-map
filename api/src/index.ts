@@ -25,6 +25,7 @@ import { getApiUsageReport, trackApiUsage } from "./usage.js";
 import { fetchWalkingDirections } from "./directions.js";
 import { findMeetingLimitConflict } from "./meetingPointLimits.js";
 import { meetingTitleSchema, validationErrorResponse } from "./meetingValidation.js";
+import { assertCanSendPing } from "./pingPermissions.js";
 import {
   allocateUniqueName,
   credentialsSchema,
@@ -586,6 +587,11 @@ app.post("/pings", auth(), async (req: AuthRequest, res) => {
     })
     .parse(req.body);
 
+  const pingAllowed = await assertCanSendPing(prisma, req.user!, body.scope, body.targetIds);
+  if (!pingAllowed.ok) {
+    return res.status(pingAllowed.status).json({ error: pingAllowed.error, detail: pingAllowed.detail });
+  }
+
   const cooldown = await prisma.ping.findFirst({
     where: {
       senderId: req.user!.id,
@@ -619,6 +625,7 @@ app.post("/pings", auth(), async (req: AuthRequest, res) => {
   });
 
   void sendPingPush(prisma, {
+    pingId: ping.id,
     recipientIds,
     priority: ping.priority,
     message: ping.message,

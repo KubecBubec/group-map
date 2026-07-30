@@ -64,10 +64,44 @@ export async function enablePushNotifications(): Promise<NotificationStatus> {
     }),
   });
 
+  markPushAlertsEnabled(true);
   return "granted";
 }
 
-export function showLocalNotification(title: string, body: string): void {
+let pushAlertsEnabled = false;
+
+/** True ak má klient aktívny Web Push – systémové upozornenia rieši server, nie socket. */
+export function isPushAlertsEnabled(): boolean {
+  return pushAlertsEnabled;
+}
+
+export function markPushAlertsEnabled(enabled: boolean): void {
+  pushAlertsEnabled = enabled;
+}
+
+export async function syncPushAlertsEnabled(): Promise<boolean> {
+  if (!("serviceWorker" in navigator) || Notification.permission !== "granted") {
+    markPushAlertsEnabled(false);
+    return false;
+  }
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    markPushAlertsEnabled(Boolean(sub));
+    return Boolean(sub);
+  } catch {
+    markPushAlertsEnabled(false);
+    return false;
+  }
+}
+
+/** Systémové upozornenie len keď push nie je zapnutý (inak by prišlo 2×: push + socket). */
+export function showAlertNotification(title: string, body: string, tag = "alert"): void {
+  if (isPushAlertsEnabled()) return;
+  showLocalNotification(title, body, tag);
+}
+
+export function showLocalNotification(title: string, body: string, tag = "ping-local"): void {
   if (Notification.permission !== "granted") return;
   try {
     if (navigator.serviceWorker?.controller) {
@@ -76,7 +110,7 @@ export function showLocalNotification(title: string, body: string): void {
           body,
           icon: APP_ICON,
           badge: APP_ICON_SMALL,
-          tag: "ping-local",
+          tag,
         }),
       );
       return;

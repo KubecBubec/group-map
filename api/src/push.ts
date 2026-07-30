@@ -48,6 +48,7 @@ const PRIORITY_LABEL: Record<string, string> = {
 export async function sendPingPush(
   prisma: PrismaClient,
   input: {
+    pingId: string;
     recipientIds: string[];
     priority: string;
     message: string;
@@ -58,7 +59,7 @@ export async function sendPingPush(
     recipientIds: input.recipientIds,
     title: `${PRIORITY_LABEL[input.priority] ?? "Ping"} · ${input.senderName}`,
     body: input.message,
-    tag: `ping-${Date.now()}`,
+    tag: `ping-${input.pingId}`,
   });
 }
 

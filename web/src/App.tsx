@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { CoordinatorProvider, useCoordinator } from "./lib/coordinator";
+import { resolveTopBarPingTarget } from "./lib/pingPermissions";
 import { Login } from "./components/Login";
 import { Onboarding } from "./components/Onboarding";
 import { PingSheet } from "./components/PingSheet";
@@ -31,8 +32,10 @@ const TAB_TITLE: Record<Tab, string> = {
 
 function Shell() {
   const [tab, setTab] = useState<Tab>("map");
-  const { selectedUserIds, openPing, focusTarget, meetingPickNonce, meetingMoveNonce, activeMeetingId } =
+  const { user, groups, selectedUserIds, openPing, focusTarget, meetingPickNonce, meetingMoveNonce, activeMeetingId } =
     useCoordinator();
+
+  const topBarPing = resolveTopBarPingTarget(user, groups, selectedUserIds);
 
   useEffect(() => {
     if (focusTarget) setTab("map");
@@ -80,13 +83,15 @@ function Shell() {
             <div className="topbar__title">{TAB_TITLE[tab]}</div>
           </div>
           <div className="topbar__actions">
-            <button
-              className="btn btn--icon"
-              aria-label="Pingnúť"
-              onClick={() => openPing({ scope: "ALL", targetIds: [], label: "všetci" })}
-            >
-              <BellIcon />
-            </button>
+            {topBarPing && (
+              <button
+                className="btn btn--icon"
+                aria-label="Pingnúť"
+                onClick={() => openPing(topBarPing)}
+              >
+                <BellIcon />
+              </button>
+            )}
           </div>
         </div>
 

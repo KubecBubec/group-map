@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useCoordinator } from "../lib/coordinator";
+import { canPingGroup } from "../lib/pingPermissions";
 import { Avatar, Empty, Sheet } from "../components/ui";
 import { PlusIcon } from "../components/icons";
 import type { Group } from "../lib/types";
@@ -69,18 +70,20 @@ export function GroupsView() {
                     <p className="card__sub">{members.length} členov</p>
                   </div>
                   <div className="row">
-                    <button
-                      className="btn btn--sm"
-                      onClick={() =>
-                        openPing({
-                          scope: "GROUP",
-                          targetIds: [g.id],
-                          label: g.name,
-                        })
-                      }
-                    >
-                      Ping
-                    </button>
+                    {canPingGroup(user, g.id, groups) && (
+                      <button
+                        className="btn btn--sm"
+                        onClick={() =>
+                          openPing({
+                            scope: "GROUP",
+                            targetIds: [g.id],
+                            label: g.name,
+                          })
+                        }
+                      >
+                        Ping
+                      </button>
+                    )}
                     <button className="btn btn--sm btn--ghost" onClick={() => setManage(g)}>
                       Spravovať
                     </button>
