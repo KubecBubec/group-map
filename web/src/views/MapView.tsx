@@ -16,7 +16,7 @@ import { LocationClusterSheet } from "../components/LocationClusterSheet";
 import { MeetingPointSheet } from "../components/MeetingPointSheet";
 import { clusterLocations } from "../lib/locationClusters";
 import { Avatar, RoleBadge, Sheet, StatusDot } from "../components/ui";
-import { CompassIcon, PlusIcon, RotateCcwIcon, RotateCwIcon, TargetIcon } from "../components/icons";
+import { CompassIcon, LayersIcon, MyLocationIcon, PlusIcon } from "../components/icons";
 
 const LIBRARIES: "places"[] = ["places"];
 const DEFAULT_CENTER = { lat: 43.0707, lng: 12.6197 };
@@ -24,7 +24,6 @@ const MAP_LAYER_STORAGE_KEY = "mapLayerMode";
 const MAP_HEADING_STORAGE_KEY = "mapHeading";
 /** Zoom pri „Vycentrovať“ – bližší ako bežné recenter (14). */
 const FOCUS_ZOOM = 18;
-const ROTATE_STEP = 30;
 const MAP_LONG_PRESS_MS = 550;
 
 type MapLayerMode = "roadmap" | "satellite" | "hybrid";
@@ -272,20 +271,18 @@ export function MapView({ isActive }: { isActive: boolean }) {
     localStorage.setItem(MAP_HEADING_STORAGE_KEY, String(normalized));
   }, []);
 
-  const rotateMap = useCallback(
-    (delta: number) => {
-      updateHeading(mapHeading + delta);
-    },
-    [mapHeading, updateHeading],
-  );
-
   const resetMapHeading = useCallback(() => {
     updateHeading(0);
   }, [updateHeading]);
 
   useEffect(() => {
     if (!mapRef.current) return;
-    mapRef.current.setHeading(mapHeading);
+    // Heading funguje len na vector mape.
+    if (typeof mapRef.current.moveCamera === "function") {
+      mapRef.current.moveCamera({ heading: mapHeading });
+    } else {
+      mapRef.current.setHeading(mapHeading);
+    }
   }, [mapHeading]);
 
   const clearLongPressTimer = useCallback(() => {
@@ -662,7 +659,19 @@ export function MapView({ isActive }: { isActive: boolean }) {
                 body: JSON.stringify({ sku: "maps" }),
               }).catch(() => {});
             }
-            map.setHeading(mapHeading);
+            if (typeof map.moveCamera === "function") {
+              map.moveCamera({ heading: mapHeading });
+            } else {
+              map.setHeading(mapHeading);
+            }
+            map.addListener("heading_changed", () => {
+              const next = normalizeHeading(map.getHeading() ?? 0);
+              setMapHeading((prev) => {
+                if (prev === next) return prev;
+                localStorage.setItem(MAP_HEADING_STORAGE_KEY, String(next));
+                return next;
+              });
+            });
             const pending = pendingFocusRef.current;
             if (pending) {
               window.setTimeout(() => {
@@ -681,7 +690,10 @@ export function MapView({ isActive }: { isActive: boolean }) {
             disableDefaultUI: true,
             zoomControl: false,
             mapTypeId: mapLayer,
+            // Rotácia (heading) vyžaduje vector rendering – raster ju ignoruje.
+            renderingType: google.maps.RenderingType.VECTOR,
             heading: mapHeading,
+            headingInteractionEnabled: true,
             clickableIcons: !pickMode,
             gestureHandling: "greedy",
           }}
@@ -1095,57 +1107,39 @@ export function MapView({ isActive }: { isActive: boolean }) {
         <div className="map-controls">
           <button
             type="button"
-            className={`round-btn round-btn--tag${mapLayer !== "roadmap" ? " is-active" : ""}`}
+            className={`round-btn${mapLayer !== "roadmap" ? " is-active" : ""}`}
             onClick={cycleMapLayer}
             aria-label={`Typ mapy: ${MAP_LAYER_LABEL[mapLayer]}. Klepni pre zmenu.`}
             title={MAP_LAYER_LABEL[mapLayer]}
           >
-            <span className="round-btn__text">
-              {mapLayer === "roadmap" ? "MAPA" : mapLayer === "satellite" ? "SAT" : "HYB"}
-            </span>
+            <LayersIcon />
           </button>
+          {mapHeading !== 0 && (
+            <button
+              type="button"
+              className="round-btn round-btn--compass is-active"
+              onClick={resetMapHeading}
+              aria-label={`Smer mapy ${mapHeading} stupňov. Nastaviť sever hore.`}
+              title={`Smer ${mapHeading}° · klepni pre sever hore`}
+            >
+              <span
+                className="round-btn__compass"
+                style={{ transform: `rotate(${-mapHeading}deg)` }}
+                aria-hidden
+              >
+                <CompassIcon />
+              </span>
+            </button>
+          )}
           <button
-            className={`round-btn round-btn--tag${recenterBusy ? " is-busy" : ""}`}
+            type="button"
+            className={`round-btn${recenterBusy ? " is-busy" : ""}`}
             onClick={() => void recenter()}
             disabled={recenterBusy}
             aria-label="Na moju polohu"
             title="Moja poloha"
           >
-            {recenterBusy ? (
-              <span className="spinner spinner--sm" aria-hidden />
-            ) : (
-              <>
-                <TargetIcon />
-                <span className="round-btn__text">MOJA</span>
-              </>
-            )}
-          </button>
-          <button
-            type="button"
-            className="round-btn"
-            onClick={() => rotateMap(-ROTATE_STEP)}
-            aria-label="Otočiť mapu doľava"
-            title="Otočiť doľava"
-          >
-            <RotateCcwIcon />
-          </button>
-          <button
-            type="button"
-            className={`round-btn${mapHeading !== 0 ? " is-active" : ""}`}
-            onClick={resetMapHeading}
-            aria-label={`Smer mapy ${mapHeading} stupňov. Nastaviť sever hore.`}
-            title={mapHeading === 0 ? "Sever hore" : `Smer ${mapHeading}°`}
-          >
-            <CompassIcon />
-          </button>
-          <button
-            type="button"
-            className="round-btn"
-            onClick={() => rotateMap(ROTATE_STEP)}
-            aria-label="Otočiť mapu doprava"
-            title="Otočiť doprava"
-          >
-            <RotateCwIcon />
+            {recenterBusy ? <span className="spinner spinner--sm" aria-hidden /> : <MyLocationIcon />}
           </button>
           {recenterMsg && <div className="map-recenter-hint">{recenterMsg}</div>}
         </div>

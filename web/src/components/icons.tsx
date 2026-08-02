@@ -84,6 +84,19 @@ export const TargetIcon = ({ size = 20 }: IconProps) => (
   </svg>
 );
 
+/** Google Maps „moja poloha“ (Material my_location). */
+export const MyLocationIcon = ({ size = 22 }: IconProps) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="currentColor"
+    aria-hidden
+  >
+    <path d="M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3A8.994 8.994 0 0 0 13 3.06V1h-2v2.06A8.994 8.994 0 0 0 3.06 11H1v2h2.06A8.994 8.994 0 0 0 11 20.94V23h2v-2.06A8.994 8.994 0 0 0 20.94 13H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z" />
+  </svg>
+);
+
 export const SatelliteIcon = ({ size = 20 }: IconProps) => (
   <svg {...base(size)}>
     <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Z" />
