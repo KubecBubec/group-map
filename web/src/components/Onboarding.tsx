@@ -69,13 +69,20 @@ export function Onboarding({
         );
         return;
       }
+      if (notif === "unsupported") {
+        // iOS sprístupní notifikácie až appke spustenej z ikony na ploche.
+        setMsg(
+          "V prehliadači sa notifikácie povoliť nedajú. Pridaj appku na plochu a otvor ju z ikony – až tam sa objaví otázka na povolenie.",
+        );
+        return;
+      }
       setMsg("Povol notifikácie v dialógu prehliadača – bez nich appka nefunguje spoľahlivo.");
     } finally {
       setBusy(false);
     }
   };
 
-  const continueAfterGranted = async () => {
+  const continueWithGeoOnly = async () => {
     setBusy(true);
     setMsg(null);
     try {
@@ -92,17 +99,26 @@ export function Onboarding({
 
   if (step === "permissions") {
     const status = getNotificationStatus();
+    // V prehliadači (mimo ikony na ploche) iOS notifikácie vôbec neponúka.
+    const notifBlocked = status === "unsupported" || status === "disabled";
     return (
       <div className="onboard">
         <div className="onboard__card">
           <div className="onboard__phone">🔔</div>
           <div style={{ textAlign: "center" }}>
             <h1 style={{ fontSize: 22 }}>Povolenia pre akciu</h1>
-            <p className="hint" style={{ marginTop: 8 }}>
-              Bez <strong>notifikácií</strong> a <strong>polohy</strong> aplikácia nefunguje – pingy
-              a živá mapa ich potrebujú. Povolenia si prehliadač pamätá pri rovnakej adrese (najlepšie
-              ikona na ploche).
-            </p>
+            {notifBlocked ? (
+              <p className="hint" style={{ marginTop: 8 }}>
+                Appka je otvorená v prehliadači, nie z ikony na ploche. Notifikácie sa tu povoliť
+                nedajú – pridaj si appku na plochu a otvor ju z ikony.
+              </p>
+            ) : (
+              <p className="hint" style={{ marginTop: 8 }}>
+                Bez <strong>notifikácií</strong> a <strong>polohy</strong> aplikácia nefunguje – pingy
+                a živá mapa ich potrebujú. Povolenia si prehliadač pamätá pri rovnakej adrese
+                (najlepšie ikona na ploche).
+              </p>
+            )}
           </div>
 
           <div className="stack">
@@ -114,9 +130,11 @@ export function Onboarding({
                   ? "povolené"
                   : status === "denied"
                     ? "zamietnuté"
-                    : status === "disabled"
-                      ? "vyžaduje HTTPS / PWA"
-                      : "ešte nepovolené"}
+                    : status === "unsupported"
+                      ? "dostupné až po pridaní na plochu"
+                      : status === "disabled"
+                        ? "vyžaduje HTTPS / PWA"
+                        : "ešte nepovolené"}
               </p>
             </div>
             <div className="card" style={{ margin: 0 }}>
@@ -127,17 +145,34 @@ export function Onboarding({
 
           {msg && <div className="auth__error">{msg}</div>}
 
-          <button
-            className="btn btn--primary btn--block"
-            disabled={busy}
-            onClick={() => void requestPermissions()}
-          >
-            {busy ? "Žiadam povolenia…" : "Povoliť notifikácie a polohu"}
-          </button>
-          {status === "granted" && (
-            <button className="btn btn--block" disabled={busy} onClick={() => void continueAfterGranted()}>
-              Pokračovať
-            </button>
+          {notifBlocked ? (
+            <>
+              <button className="btn btn--primary btn--block" onClick={() => setStep("install")}>
+                Ukáž návod na pridanie na plochu
+              </button>
+              <button
+                className="btn btn--block"
+                disabled={busy}
+                onClick={() => void continueWithGeoOnly()}
+              >
+                {busy ? "Žiadam polohu…" : "Zatiaľ povoliť len polohu"}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                className="btn btn--primary btn--block"
+                disabled={busy}
+                onClick={() => void requestPermissions()}
+              >
+                {busy ? "Žiadam povolenia…" : "Povoliť notifikácie a polohu"}
+              </button>
+              {status === "granted" && (
+                <button className="btn btn--block" disabled={busy} onClick={() => void continueWithGeoOnly()}>
+                  Pokračovať
+                </button>
+              )}
+            </>
           )}
           <p className="hint" style={{ textAlign: "center" }}>
             Tento návod nájdeš kedykoľvek neskôr v sekcii „Viac“.
