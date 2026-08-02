@@ -55,6 +55,16 @@ function readMapHeading(): number {
   return normalizeHeading(parsed);
 }
 
+/** Rotácia funguje len na vector mape – na rastri (starší iOS, bez WebGL) sa ticho ignoruje. */
+function applyMapHeading(map: google.maps.Map, heading: number): void {
+  try {
+    if (typeof map.moveCamera === "function") map.moveCamera({ heading });
+    else map.setHeading(heading);
+  } catch {
+    // raster mapa heading nepodporuje
+  }
+}
+
 function sameIdSet(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false;
   const set = new Set(a);
@@ -98,6 +108,7 @@ export function MapView({ isActive }: { isActive: boolean }) {
   });
 
   const mapRef = useRef<google.maps.Map | null>(null);
+  const mapCreatedRef = useRef(false);
   const pendingFocusRef = useRef<{ id: string; nonce: number } | null>(null);
   const locationsRef = useRef(locations);
   locationsRef.current = locations;
@@ -175,7 +186,6 @@ export function MapView({ isActive }: { isActive: boolean }) {
     activeMeeting && user && canShowRouteForLocation(myLoc),
   );
   const myRouteOn = Boolean(user && routeUserIds.includes(user.id));
-  const iAmMeetingTarget = Boolean(user && meetingTargetIds.has(user.id));
 
   const peekFresh = useMemo(() => {
     if (!peek) return null;
@@ -277,13 +287,28 @@ export function MapView({ isActive }: { isActive: boolean }) {
 
   useEffect(() => {
     if (!mapRef.current) return;
-    // Heading funguje len na vector mape.
-    if (typeof mapRef.current.moveCamera === "function") {
-      mapRef.current.moveCamera({ heading: mapHeading });
-    } else {
-      mapRef.current.setHeading(mapHeading);
-    }
+    applyMapHeading(mapRef.current, mapHeading);
   }, [mapHeading]);
+
+  /**
+   * `renderingType` sa dá nastaviť len pri vytváraní mapy – neskorší `setOptions`
+   * hodí výnimku a zhodí celý React strom. Preto ho posielame iba pri prvom renderi.
+   */
+  const mapOptions = useMemo<google.maps.MapOptions>(() => {
+    const base: google.maps.MapOptions = {
+      disableDefaultUI: true,
+      zoomControl: false,
+      mapTypeId: mapLayer,
+      clickableIcons: !pickMode,
+      gestureHandling: "greedy",
+    };
+    if (!isLoaded || mapCreatedRef.current) return base;
+    return {
+      ...base,
+      renderingType: google.maps.RenderingType?.VECTOR,
+      headingInteractionEnabled: true,
+    };
+  }, [isLoaded, mapLayer, pickMode]);
 
   const clearLongPressTimer = useCallback(() => {
     if (longPressTimerRef.current !== null) {
@@ -651,6 +676,7 @@ export function MapView({ isActive }: { isActive: boolean }) {
           zoom={14}
           onLoad={(map) => {
             mapRef.current = map;
+            mapCreatedRef.current = true;
             google.maps.event.trigger(map, "resize");
             if (!mapsUsageReportedRef.current) {
               mapsUsageReportedRef.current = true;
@@ -659,11 +685,7 @@ export function MapView({ isActive }: { isActive: boolean }) {
                 body: JSON.stringify({ sku: "maps" }),
               }).catch(() => {});
             }
-            if (typeof map.moveCamera === "function") {
-              map.moveCamera({ heading: mapHeading });
-            } else {
-              map.setHeading(mapHeading);
-            }
+            applyMapHeading(map, mapHeading);
             map.addListener("heading_changed", () => {
               const next = normalizeHeading(map.getHeading() ?? 0);
               setMapHeading((prev) => {
@@ -686,17 +708,7 @@ export function MapView({ isActive }: { isActive: boolean }) {
           onMouseDown={onMapPressStart}
           onMouseUp={onMapPressEnd}
           onDragStart={onMapDragStart}
-          options={{
-            disableDefaultUI: true,
-            zoomControl: false,
-            mapTypeId: mapLayer,
-            // Rotácia (heading) vyžaduje vector rendering – raster ju ignoruje.
-            renderingType: google.maps.RenderingType.VECTOR,
-            heading: mapHeading,
-            headingInteractionEnabled: true,
-            clickableIcons: !pickMode,
-            gestureHandling: "greedy",
-          }}
+          options={mapOptions}
         >
           {mapClusters.map((cluster) => {
             if (cluster.members.length === 1) {
@@ -899,15 +911,12 @@ export function MapView({ isActive }: { isActive: boolean }) {
             {selfFocus && activeMeeting && (
               <>
                 <div className="map-route-nav__info">
-                  <span className="map-route-nav__title">
-                    {activeMeeting.title}
-                    {" · tvoja trasa"}
-                  </span>
+                  <span className="map-route-nav__title">{activeMeeting.title}</span>
                   <span className="map-route-nav__meta" role="status" aria-live="polite">
                     {myRouteLoading ? (
                       <>
                         <span className="spinner spinner--sm" aria-hidden />
-                        počítam trasu…
+                        počítam…
                       </>
                     ) : myEta && myDistance ? (
                       <>
@@ -936,7 +945,7 @@ export function MapView({ isActive }: { isActive: boolean }) {
                     className="btn btn--sm btn--ghost"
                     onClick={() => setMyRouteHidden(true)}
                   >
-                    Skryť trasu
+                    Skryť
                   </button>
                   {myLoc && (
                     <button
@@ -945,7 +954,7 @@ export function MapView({ isActive }: { isActive: boolean }) {
                       onClick={() => centerOnFocus(myLoc, "self")}
                       disabled={peekCenterBusy}
                     >
-                      {peekCenterBusy ? "Centrujem…" : "Vycentrovať"}
+                      {peekCenterBusy ? "…" : "Vycentrovať"}
                     </button>
                   )}
                   <button
@@ -961,14 +970,9 @@ export function MapView({ isActive }: { isActive: boolean }) {
                     {staleLocationRouteHint(true)}
                   </p>
                 )}
-                {canShowMyRoute && !iAmMeetingTarget && (
-                  <p className="map-route-nav__hint">
-                    Tento zraz nie je priamo pre teba – trasa je len na navigáciu.
-                  </p>
-                )}
                 {!routeError && !myEta && !myRouteLoading && Boolean(myRouteLine) && (
                   <p className="map-route-nav__hint map-route-nav__hint--warn">
-                    Nepodarilo sa vypočítať ETA trasy.
+                    Nepodarilo sa vypočítať ETA.
                   </p>
                 )}
               </>
