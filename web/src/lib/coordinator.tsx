@@ -142,6 +142,7 @@ export function CoordinatorProvider({ children }: { children: ReactNode }) {
   const resyncFromServerRef = useRef<() => void>(() => {});
   const geoWatchIdRef = useRef<number | null>(null);
   const geoWatchLoggedRef = useRef(false);
+  const geoGrantedRef = useRef(false);
   userIdRef.current = user?.id ?? null;
 
   useEffect(() => {
@@ -351,6 +352,11 @@ export function CoordinatorProvider({ children }: { children: ReactNode }) {
   const applyMyPosition = useCallback((pos: GeolocationPosition, source: string) => {
     const next = { lat: pos.coords.latitude, lng: pos.coords.longitude };
     setMyPos(next);
+    // Súradnice dostaneme len s povolením – Safari to cez Permissions API nepriznáva.
+    geoGrantedRef.current = true;
+    setGeoPermission("granted");
+    if (!hasGeoConsent()) setGeoConsent(true);
+    setGeoConsentGranted(true);
     if (source === "watch") {
       if (!geoWatchLoggedRef.current) {
         geoWatchLoggedRef.current = true;
@@ -406,7 +412,12 @@ export function CoordinatorProvider({ children }: { children: ReactNode }) {
           "error",
         );
         if (err.code === 1) {
-          void readGeoPermission().then((perm) => setGeoPermission(perm as GeoPermissionState));
+          geoGrantedRef.current = false;
+          void readGeoPermission().then((perm) => {
+            const state = perm as GeoPermissionState;
+            // Prehliadač polohu odmietol – aj keď Permissions API stav nevie povedať.
+            setGeoPermission(state === "granted" || state === "denied" ? state : "denied");
+          });
         }
       },
       { enableHighAccuracy: true, maximumAge: 10_000, timeout: 20_000 },
@@ -414,7 +425,15 @@ export function CoordinatorProvider({ children }: { children: ReactNode }) {
   }, [applyMyPosition]);
 
   const syncGeoTracking = useCallback(async () => {
-    const perm = (await readGeoPermission()) as GeoPermissionState;
+    const reported = (await readGeoPermission()) as GeoPermissionState;
+    if (reported === "denied") geoGrantedRef.current = false;
+    // Safari vracia "unsupported"/"query_failed"; vtedy veríme prijatej polohe.
+    const perm =
+      reported === "granted" || reported === "denied"
+        ? reported
+        : geoGrantedRef.current
+          ? "granted"
+          : reported;
     const consented = hasGeoConsent();
     setGeoPermission(perm);
     setGeoConsentGranted(consented);
