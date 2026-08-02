@@ -118,10 +118,11 @@ export const RotateCwIcon = ({ size = 18 }: IconProps) => (
   </svg>
 );
 
-export const CompassIcon = ({ size = 18 }: IconProps) => (
-  <svg {...base(size)}>
-    <circle cx="12" cy="12" r="9" />
-    <path d="m12 7 3 7-7 3 4-10Z" />
+/** Ihla kompasu ako v Google Maps – červená polovica ukazuje na sever. */
+export const CompassIcon = ({ size = 24 }: IconProps) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
+    <path d="M12 2.5 6.8 12h10.4L12 2.5Z" fill="#e5484d" />
+    <path d="M12 21.5 6.8 12h10.4L12 21.5Z" fill="#9aa4b2" />
   </svg>
 );
 

@@ -109,6 +109,8 @@ export function MapView({ isActive }: { isActive: boolean }) {
 
   const mapRef = useRef<google.maps.Map | null>(null);
   const mapCreatedRef = useRef(false);
+  const headingFrameRef = useRef<number | null>(null);
+  const headingSaveRef = useRef<number | null>(null);
   const pendingFocusRef = useRef<{ id: string; nonce: number } | null>(null);
   const locationsRef = useRef(locations);
   locationsRef.current = locations;
@@ -275,20 +277,45 @@ export function MapView({ isActive }: { isActive: boolean }) {
     });
   }, []);
 
-  const updateHeading = useCallback((next: number) => {
-    const normalized = normalizeHeading(next);
-    setMapHeading(normalized);
-    localStorage.setItem(MAP_HEADING_STORAGE_KEY, String(normalized));
+  /** Zápis do localStorage odkladáme – počas rotácie by bežal každý snímok. */
+  const persistHeading = useCallback((value: number) => {
+    if (headingSaveRef.current !== null) window.clearTimeout(headingSaveRef.current);
+    headingSaveRef.current = window.setTimeout(() => {
+      headingSaveRef.current = null;
+      localStorage.setItem(MAP_HEADING_STORAGE_KEY, String(value));
+    }, 400);
   }, []);
 
-  const resetMapHeading = useCallback(() => {
-    updateHeading(0);
-  }, [updateHeading]);
+  /**
+   * Heading z mapy len čítame. Keby sme ho po každej zmene písali späť cez
+   * `moveCamera`, prerušili by sme prebiehajúce gesto a rotácia by sa zasekla.
+   */
+  const watchHeading = useCallback(
+    (map: google.maps.Map) => {
+      if (headingFrameRef.current !== null) return;
+      headingFrameRef.current = window.requestAnimationFrame(() => {
+        headingFrameRef.current = null;
+        const next = normalizeHeading(map.getHeading() ?? 0);
+        setMapHeading((prev) => (prev === next ? prev : next));
+        persistHeading(next);
+      });
+    },
+    [persistHeading],
+  );
 
-  useEffect(() => {
-    if (!mapRef.current) return;
-    applyMapHeading(mapRef.current, mapHeading);
-  }, [mapHeading]);
+  const resetMapHeading = useCallback(() => {
+    if (mapRef.current) applyMapHeading(mapRef.current, 0);
+    setMapHeading(0);
+    persistHeading(0);
+  }, [persistHeading]);
+
+  useEffect(
+    () => () => {
+      if (headingFrameRef.current !== null) window.cancelAnimationFrame(headingFrameRef.current);
+      if (headingSaveRef.current !== null) window.clearTimeout(headingSaveRef.current);
+    },
+    [],
+  );
 
   /**
    * `renderingType` sa dá nastaviť len pri vytváraní mapy – neskorší `setOptions`
@@ -686,14 +713,7 @@ export function MapView({ isActive }: { isActive: boolean }) {
               }).catch(() => {});
             }
             applyMapHeading(map, mapHeading);
-            map.addListener("heading_changed", () => {
-              const next = normalizeHeading(map.getHeading() ?? 0);
-              setMapHeading((prev) => {
-                if (prev === next) return prev;
-                localStorage.setItem(MAP_HEADING_STORAGE_KEY, String(next));
-                return next;
-              });
-            });
+            map.addListener("heading_changed", () => watchHeading(map));
             const pending = pendingFocusRef.current;
             if (pending) {
               window.setTimeout(() => {
@@ -1121,7 +1141,7 @@ export function MapView({ isActive }: { isActive: boolean }) {
           {mapHeading !== 0 && (
             <button
               type="button"
-              className="round-btn round-btn--compass is-active"
+              className="round-btn"
               onClick={resetMapHeading}
               aria-label={`Smer mapy ${mapHeading} stupňov. Nastaviť sever hore.`}
               title={`Smer ${mapHeading}° · klepni pre sever hore`}
